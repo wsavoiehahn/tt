@@ -174,11 +174,13 @@ function displayReports(reports) {
                 reportData = report;
             }
             
-            // const reportData = report.data || {};
             const personaName = reportData.persona_name || 'Unknown';
             const behaviorName = reportData.behavior_name || 'Unknown';
 
             const metrics = reportData.overall_metrics || {};
+            
+            // Extract the test_case_id for delete functionality
+            const testCaseId = reportData.test_case_id || '';
             
             row.innerHTML = `
                 <td><a href="/dashboard/reports/${report.report_id}">${report.report_id.substring(0, 8)}...</a></td>
@@ -195,6 +197,7 @@ function displayReports(reports) {
                     <div class="btn-group">
                         <a href="/dashboard/reports/${report.report_id}" class="btn btn-sm btn-outline-primary">View</a>
                         <button class="btn btn-sm btn-outline-secondary view-json" data-id="${report.report_id}">JSON</button>
+                        <button class="btn btn-sm btn-outline-danger delete-test" data-id="${testCaseId}" data-report="${report.report_id}">Delete</button>
                     </div>
                 </td>
             `;
@@ -374,16 +377,51 @@ async function createNewTest() {
             document.getElementById('newTestForm').reset();
             
             // Show success message
-            alert(`Test created successfully! Test ID: ${data.test_id}`);
+            showToast(`Test created successfully! Test ID: ${data.test_id}`, 'success');
             
             // Fetch reports after a delay to allow test to complete
             setTimeout(fetchReports, 2000);
         } else {
-            alert(`Error creating test: ${data.detail || 'Unknown error'}`);
+            showToast(`Error creating test: ${data.detail || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         console.error('Error creating test:', error);
-        alert('Error creating test. Please try again.');
+        showToast('Error creating test. Please try again.', 'error');
+    }
+}
+
+// Delete a test
+async function deleteTest(testId, reportId) {
+    if (!testId) {
+        showToast('Could not determine the test ID to delete.', 'error');
+        return;
+    }
+    
+    try {
+        // Show a loading indicator
+        showToast('Deleting test...', 'info');
+        
+        const response = await fetch(`/api/tests/${testId}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Show success message
+            showToast('Test and associated reports deleted successfully.', 'success');
+            
+            // Refresh the reports list
+            fetchReports();
+        } else {
+            showToast(`Error deleting test: ${data.detail || 'Unknown error'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error deleting test:', error);
+        showToast('Error deleting test. Please try again.', 'error');
     }
 }
 
@@ -427,6 +465,46 @@ function exportReportsAsCSV() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+}
+
+// Toast notification helper function
+function showToast(message, type = 'info') {
+    // Check if toast container exists, if not create it
+    let toastContainer = document.querySelector('.toast-container');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+        document.body.appendChild(toastContainer);
+    }
+    
+    // Create toast element
+    const toastEl = document.createElement('div');
+    const toastId = 'toast-' + Date.now();
+    toastEl.id = toastId;
+    toastEl.className = `toast align-items-center text-white ${type === 'error' ? 'bg-danger' : type === 'success' ? 'bg-success' : 'bg-primary'}`;
+    toastEl.setAttribute('role', 'alert');
+    toastEl.setAttribute('aria-live', 'assertive');
+    toastEl.setAttribute('aria-atomic', 'true');
+    
+    toastEl.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    `;
+    
+    toastContainer.appendChild(toastEl);
+    
+    // Initialize and show the toast
+    const toast = new bootstrap.Toast(toastEl, {
+        autohide: true,
+        delay: 3000
+    });
+    toast.show();
+    
+    return toast;
 }
 
 // Set up event listeners
@@ -490,6 +568,38 @@ function setupEventListeners() {
                 window.open(`/api/reports/${reportId}`, '_blank');
             }
         }
+    });
+    
+    // Add event delegation for delete test buttons
+    document.getElementById('reportsTableBody').addEventListener('click', function(e) {
+        if (e.target.classList.contains('delete-test') || e.target.parentElement.classList.contains('delete-test')) {
+            const button = e.target.closest('.delete-test');
+            if (button) {
+                const testId = button.getAttribute('data-id');
+                const reportId = button.getAttribute('data-report');
+                
+                // Store the IDs for use by the confirmation button
+                document.getElementById('confirmDeleteBtn').setAttribute('data-test-id', testId);
+                document.getElementById('confirmDeleteBtn').setAttribute('data-report-id', reportId);
+                
+                // Show the confirmation modal
+                const deleteModal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+                deleteModal.show();
+            }
+        }
+    });
+    
+    // Add event listener for the confirm delete button
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        const testId = this.getAttribute('data-test-id');
+        const reportId = this.getAttribute('data-report-id');
+        
+        // Close the modal
+        const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteConfirmModal'));
+        deleteModal.hide();
+        
+        // Call the delete function
+        deleteTest(testId, reportId);
     });
     
     // Set up persona and behavior select dropdowns to show tooltips with traits
