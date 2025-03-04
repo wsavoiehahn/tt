@@ -244,15 +244,6 @@ class S3Service:
         return {}
 
     def list_reports(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """
-        List available reports.
-
-        Args:
-            limit: Maximum number of reports to list
-
-        Returns:
-            List of report metadata
-        """
         try:
             response = self.s3_client.list_objects_v2(
                 Bucket=self.bucket_name, Prefix="reports/", MaxKeys=limit
@@ -270,7 +261,7 @@ class S3Service:
                             "report_id": report_id,
                             "date": obj["LastModified"],
                             "size": obj["Size"],
-                            "s3_key": obj["Key"],
+                            "s3_key": obj["Key"],  # Include full S3 key
                             "s3_url": f"s3://{self.bucket_name}/{obj['Key']}",
                         }
                     )

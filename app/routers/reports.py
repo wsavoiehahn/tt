@@ -167,10 +167,19 @@ async def delete_report(report_id: str):
     if not report:
         raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
 
-    # Get S3 key for the report
-    s3_key = f"reports/{report_id}.json"
-
     try:
+        # List reports to find the exact S3 key
+        reports = s3_service.list_reports(limit=1000)
+        matching_reports = [r for r in reports if r["report_id"] == report_id]
+
+        if not matching_reports:
+            raise HTTPException(
+                status_code=404, detail=f"Report {report_id} not found in S3"
+            )
+
+        # Get the S3 key
+        s3_key = matching_reports[0]["s3_key"]
+
         # Delete the report from S3
         s3_service.s3_client.delete_object(Bucket=s3_service.bucket_name, Key=s3_key)
 
