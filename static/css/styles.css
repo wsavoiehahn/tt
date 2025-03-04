@@ -1,0 +1,219 @@
+/* static/css/styles.css */
+
+/* General Styles */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f8f9fa;
+    color: #333;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* Header Styles */
+.dashboard-header, .report-header {
+    background-color: #343a40;
+    color: white;
+    padding: 1rem 0;
+    margin-bottom: 2rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Card Styles */
+.card {
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1.5rem;
+    transition: transform 0.2s ease-in-out;
+    background-color: white;
+    border: none;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+.card-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+    padding: 1rem;
+    font-weight: 500;
+}
+
+.card-body {
+    padding: 1.5rem;
+}
+
+/* Metric Cards */
+.metric-card {
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.metric-value {
+    font-size: 2.5rem;
+    font-weight: bold;
+    margin: 1rem 0;
+    color: #2980b9;
+}
+
+.metric-title {
+    font-size: 1.1rem;
+    color: #6c757d;
+    font-weight: 500;
+}
+
+.metric-trend {
+    font-size: 0.9rem;
+    color: #6c757d;
+}
+
+/* Badge Styles */
+.persona-badge, .behavior-badge {
+    font-size: 0.8rem;
+    border-radius: 12px;
+    padding: 0.25rem 0.75rem;
+    margin-right: 0.5rem;
+    display: inline-block;
+}
+
+.persona-badge {
+    background-color: #17a2b8;
+    color: white;
+}
+
+.behavior-badge {
+    background-color: #6610f2;
+    color: white;
+}
+
+/* Table Styles */
+.report-table {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.report-table th {
+    background-color: #343a40;
+    color: white;
+    padding: 12px;
+    text-align: left;
+}
+
+.report-table td {
+    padding: 12px;
+    border-bottom: 1px solid #ddd;
+}
+
+.report-table tr:hover {
+    background-color: #f5f5f5;
+}
+
+/* Chart Styles */
+.chart-container {
+    height: 300px;
+    margin-bottom: 2rem;
+}
+
+/* Loading Styles */
+.loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 200px;
+    flex-direction: column;
+}
+
+/* Stat Change Colors */
+.stat-change-positive {
+    color: #28a745;
+}
+
+.stat-change-negative {
+    color: #dc3545;
+}
+
+/* Conversation Styles */
+.conversation-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 1rem;
+    background-color: #f8f9fa;
+}
+
+.conversation-turn {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+.turn-evaluator {
+    background-color: #e3f2fd;
+    border-left: 4px solid #2196f3;
+}
+
+.turn-agent {
+    background-color: #e8f5e9;
+    border-left: 4px solid #4caf50;
+}
+
+.speaker-label {
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+}
+
+.turn-text {
+    white-space: pre-wrap;
+}
+
+/* Form Styles */
+.form-label {
+    font-weight: 500;
+}
+
+.question-item {
+    margin-bottom: 10px;
+}
+
+/* Audio Player */
+.audio-player {
+    width: 100%;
+    margin: 10px 0;
+}
+
+/* Button Styles */
+.btn-primary {
+    background-color: #3498db;
+    border-color: #3498db;
+}
+
+.btn-primary:hover {
+    background-color: #2980b9;
+    border-color: #2980b9;
+}
+
+.btn-outline-light:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .metric-card {
+        margin-bottom: 15px;
+    }
+    
+    .chart-container {
+        height: 250px;
+    }
+    
+    .card-body {
+        padding: 1rem;
+    }
+}
