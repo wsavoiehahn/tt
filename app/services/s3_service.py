@@ -219,7 +219,9 @@ class S3Service:
             response = self.s3_client.get_object(Bucket=bucket, Key=key)
             return response["Body"].read()
         except ClientError as e:
-            logger.error(f"Error getting object from S3: {str(e)}")
+            logger.error(
+                f"Error getting object from S3: {str(e)} - Bucket: {bucket}, Key: {key}"
+            )
             return b""
 
     def get_json(self, key: str) -> Dict[str, Any]:

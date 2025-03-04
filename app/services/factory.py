@@ -19,6 +19,11 @@ def get_service(service_type: str) -> Any:
 
             logger.info("Using local storage service")
             return LocalStorageService()
+        else:
+            from .s3_service import s3_service
+
+            logger.info("Using S3 storage service")
+            return s3_service
     elif service_type == "twilio":
         if is_local_mode:
             from .mock_twilio_service import MockTwilioService
