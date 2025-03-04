@@ -28,15 +28,6 @@ class TwilioService:
         self.active_calls = {}
 
     def initiate_call(self, test_id: str) -> Dict[str, Any]:
-        """
-        Initiate a call to the AI service.
-
-        Args:
-            test_id: Unique identifier for the test case
-
-        Returns:
-            Dictionary with call SID and status
-        """
         try:
             call = self.client.calls.create(
                 url=f"{self.callback_url}/webhooks/call-started?test_id={test_id}",
@@ -46,6 +37,9 @@ class TwilioService:
                 recording_status_callback=f"{self.callback_url}/webhooks/recording-status",
                 recording_status_callback_event=["completed"],
             )
+
+            # Log the call details
+            logger.info(f"Call initiated - SID: {call.sid}, Test ID: {test_id}")
 
             self.active_calls[call.sid] = {
                 "test_id": test_id,

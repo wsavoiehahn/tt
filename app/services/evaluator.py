@@ -69,12 +69,15 @@ class EvaluatorService:
 
         # Initialize test tracking
         self.active_tests[test_id] = {
-            "test_case": test_case.dict(),
+            "test_case": test_case.dict(),  # Ensure full test case data is stored
             "status": "started",
             "start_time": start_time,
-            "current_question_index": 0,
+            "current_question_index": 0,  # Start at the first question
             "questions_evaluated": [],
         }
+
+        # Log the active tests to verify
+        logger.info(f"Active tests after adding: {list(self.active_tests.keys())}")
 
         # Save test case configuration
         s3_service.save_test_case(test_case.dict(), test_id)

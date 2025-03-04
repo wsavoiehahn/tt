@@ -31,26 +31,53 @@ async def call_started(request: Request):
     """
     # Parse the request form data
     form_data = await request.form()
+
+    # Comprehensive logging
+    logger.info("Call Started Webhook Received")
+    logger.info("Form Data:")
+    for key, value in form_data.items():
+        logger.info(f"{key}: {value}")
+
     call_sid = form_data.get("CallSid")
     test_id = form_data.get("test_id")
 
-    logger.info(f"Call started: {call_sid} for test {test_id}")
+    logger.info(f"Parsed Call SID: {call_sid}")
+    logger.info(f"Parsed Test ID: {test_id}")
 
-    # Generate TwiML for the first question
-    if test_id and test_id in evaluator_service.active_tests:
+    # Check if test_id is a string
+    if test_id:
+        test_id = str(test_id)  # Ensure it's a string
+
+    logger.info("Active Tests:")
+    logger.info(json.dumps(list(evaluator_service.active_tests.keys()), indent=2))
+
+    # Check if test_id exists in active tests
+    if test_id in evaluator_service.active_tests:
         test_data = evaluator_service.active_tests[test_id]
-        current_question_index = test_data.get("current_question_index", 0)
+        logger.info("Test Data Found:")
+        logger.info(json.dumps(test_data, indent=2, default=str))
 
-        if current_question_index < len(test_data["test_case"]["config"]["questions"]):
-            question = test_data["test_case"]["config"]["questions"][
-                current_question_index
-            ]["text"]
+        current_question_index = test_data.get("current_question_index", 0)
+        questions = (
+            test_data.get("test_case", {}).get("config", {}).get("questions", [])
+        )
+
+        logger.info(f"Current Question Index: {current_question_index}")
+        logger.info(f"Total Questions: {len(questions)}")
+
+        if current_question_index < len(questions):
+            question = questions[current_question_index]["text"]
+            logger.info(f"Selected Question: {question}")
+
             twiml = twilio_service.generate_twiml_for_question(
                 question, test_id, call_sid
             )
             return HTMLResponse(content=twiml, media_type="application/xml")
+        else:
+            logger.warning("No more questions to ask")
 
-    # Default response if no question is found
+    # Default response with more specific logging
+    logger.error(f"No active test found for test_id: {test_id}")
     return HTMLResponse(
         content="<Response><Say>No active test found. Goodbye.</Say><Hangup/></Response>",
         media_type="application/xml",
