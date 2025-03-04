@@ -177,30 +177,45 @@ async def delete_test(test_id: UUID):
     # Find and delete any associated reports
     deleted_reports = []
     try:
-        # List all reports
-        reports = reporting_service.list_reports(limit=1000)
+        # List all reports in any date subfolder
+        report_prefix = "reports/"
+        paginator = s3_service.s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=s3_service.bucket_name, Prefix=report_prefix)
 
-        for report_meta in reports:
-            report_id = report_meta.get("report_id")
-            if not report_id:
+        for page in pages:
+            if "Contents" not in page:
                 continue
 
-            # Get full report data
-            report_data = reporting_service.get_report(report_id)
-            if report_data and report_data.get("test_case_id") == test_id_str:
-                # Found a matching report, delete it
-                report_s3_key = f"reports/{report_id}.json"
-                try:
-                    s3_service.s3_client.delete_object(
-                        Bucket=s3_service.bucket_name, Key=report_s3_key
-                    )
-                    deleted_reports.append(report_id)
+            # Check each report file to see if it's associated with this test
+            for obj in page["Contents"]:
+                if obj["Key"].endswith(".json"):
+                    try:
+                        # Get the report data
+                        report_data = s3_service.get_json(obj["Key"])
 
-                    # Remove from cache if exists
-                    if report_id in reporting_service.cached_reports:
-                        del reporting_service.cached_reports[report_id]
-                except Exception as e:
-                    logger.warning(f"Error deleting report {report_id}: {str(e)}")
+                        # Check if it's for our test
+                        if (
+                            report_data
+                            and report_data.get("test_case_id") == test_id_str
+                        ):
+                            # Delete the report
+                            s3_service.s3_client.delete_object(
+                                Bucket=s3_service.bucket_name, Key=obj["Key"]
+                            )
+
+                            # Extract report ID from filename
+                            report_id = obj["Key"].split("/")[-1].replace(".json", "")
+                            deleted_reports.append(report_id)
+
+                            # Remove from cache if exists
+                            if report_id in reporting_service.cached_reports:
+                                del reporting_service.cached_reports[report_id]
+
+                            logger.info(f"Deleted associated report: {obj['Key']}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Error processing report {obj['Key']}: {str(e)}"
+                        )
     except Exception as e:
         logger.error(f"Error cleaning up associated reports: {str(e)}")
 
