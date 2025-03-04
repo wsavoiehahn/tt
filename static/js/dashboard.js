@@ -165,36 +165,52 @@ function displayReports(reports) {
         document.getElementById('noReportsMessage').style.display = 'none';
         
         reports.forEach(report => {
+            // Try different ways of extracting data
+            let reportData = report.data || report;
+            
+            // Try multiple paths to find persona and behavior names
+            const personaName = 
+                reportData.persona_name || 
+                reportData.test_case?.config?.persona_name || 
+                reportData.config?.persona_name || 
+                'Unknown';
+            
+            const behaviorName = 
+                reportData.behavior_name || 
+                reportData.test_case?.config?.behavior_name || 
+                reportData.config?.behavior_name || 
+                'Unknown';
+
+            // Extract metrics, with fallback to empty object
+            const metrics = reportData.overall_metrics || reportData.metrics || {};
+
+            // Try to extract test case ID
+            const testCaseId = 
+                reportData.test_case_id || 
+                reportData.id || 
+                report.report_id || 
+                'unknown';
+
             const row = document.createElement('tr');
-
-            let reportData;
-            if (report.data) {
-                reportData = report.data;
-            } else {
-                reportData = report;
-            }
-            
-            const personaName = reportData.persona_name || 'Unknown';
-            const behaviorName = reportData.behavior_name || 'Unknown';
-
-            const metrics = reportData.overall_metrics || {};
-            
-            // Extract test_case_id
-            const testCaseId = reportData.test_case_id || 
-                               (reportData.id ? String(reportData.id) : 
-                               (report.report_id ? report.report_id : 'unknown'));
-            
             row.innerHTML = `
                 <td><a href="/dashboard/reports/${report.report_id}">${report.report_id.substring(0, 8)}...</a></td>
-                <td>${reportData.test_case_name || 'Unknown Test Case'}</td>
+                <td>${reportData.test_case_name || reportData.name || 'Unknown Test Case'}</td>
                 <td>
                     <span class="persona-badge">${personaName}</span>
                     <span class="behavior-badge">${behaviorName}</span>
                 </td>
-                <td>${new Date(report.date).toLocaleString()}</td>
+                <td>${new Date(report.date).toLocaleString('en-US', { 
+                    year: 'numeric', 
+                    month: '2-digit', 
+                    day: '2-digit', 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    hour12: false, 
+                    timeZone: 'America/Chicago' 
+                }).replace(',', '')}</td>
                 <td>${Math.round((metrics.accuracy || 0) * 100)}%</td>
                 <td>${Math.round((metrics.empathy || 0) * 100)}%</td>
-                <td>${(metrics.response_time || 0).toFixed(1)}s</td>
+                <td>${((metrics.response_time || 0)).toFixed(1)}s</td>
                 <td>
                     <div class="btn-group">
                         <a href="/dashboard/reports/${report.report_id}" class="btn btn-sm btn-outline-primary">View</a>
@@ -210,7 +226,6 @@ function displayReports(reports) {
     
     document.getElementById('loadingReports').style.display = 'none';
 }
-
 // Fetch personas and behaviors
 async function fetchPersonasAndBehaviors() {
     try {
