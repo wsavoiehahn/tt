@@ -271,14 +271,14 @@ class OpenAIService:
         
         Provide your evaluation in JSON format with ratings and brief explanations:
         
-        {
+        {{
             "accuracy": 0.0-1.0,
             "accuracy_explanation": "brief explanation",
             "empathy": 0.0-1.0,
             "empathy_explanation": "brief explanation",
             "response_time": seconds,
             "overall_feedback": "brief summary feedback"
-        }
+        }}
         """
 
 
