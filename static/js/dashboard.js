@@ -126,15 +126,20 @@ async function fetchReports() {
     try {
         document.getElementById('loadingReports').style.display = 'block';
         
-        // In a real implementation, this would fetch from the API
         const response = await fetch('/api/reports');
         let reports = [];
         
         if (response.ok) {
             reports = await response.json();
+            
+            // Filter out any reports that might be problematic
+            reports = reports.filter(report => {
+                // Additional checks to ensure report has necessary information
+                return report.report_id && 
+                       (report.data || report.test_case_name || report.name);
+            });
         } else {
             console.error('Error fetching reports:', response.statusText);
-            // Use empty array for reports if API call fails
         }
         
         displayReports(reports);

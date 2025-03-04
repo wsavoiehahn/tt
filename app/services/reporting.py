@@ -97,7 +97,14 @@ class ReportingService:
         """
         # Check cache first
         if report_id in self.cached_reports:
-            return self.cached_reports[report_id]
+            try:
+                # Attempt to verify the report still exists
+                s3_key = f"reports/{report_id}.json"
+                s3_service.get_object(s3_key)
+                return self.cached_reports[report_id]
+            except Exception:
+                # If report doesn't exist, remove from cache
+                del self.cached_reports[report_id]
 
         # Try to load from S3
         report_data = None
@@ -109,16 +116,22 @@ class ReportingService:
         ]
 
         for path in possible_paths:
-            data = s3_service.get_json(path)
-            if data:
-                report_data = data
-                break
+            try:
+                data = s3_service.get_json(path)
+                if data:
+                    report_data = data
+                    break
+            except Exception as e:
+                # Log the specific error, but continue trying other paths
+                logger.warning(f"Error checking path {path}: {str(e)}")
 
         if report_data:
             # Cache the report
             self.cached_reports[report_id] = report_data
             return report_data
 
+        # If no report found, log a warning and return None
+        logger.warning(f"Report {report_id} not found in any location")
         return None
 
     def list_reports(self, limit: int = 100) -> List[Dict[str, Any]]:

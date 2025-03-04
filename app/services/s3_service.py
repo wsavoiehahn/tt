@@ -252,19 +252,28 @@ class S3Service:
             reports = []
             for obj in response.get("Contents", []):
                 if obj["Key"].endswith(".json"):
-                    # Extract report ID from key
-                    key_parts = obj["Key"].split("/")
-                    report_id = key_parts[-1].replace(".json", "")
+                    try:
+                        # Verify the object can be retrieved
+                        report_data = self.get_json(obj["Key"])
 
-                    reports.append(
-                        {
-                            "report_id": report_id,
-                            "date": obj["LastModified"],
-                            "size": obj["Size"],
-                            "s3_key": obj["Key"],  # Include full S3 key
-                            "s3_url": f"s3://{self.bucket_name}/{obj['Key']}",
-                        }
-                    )
+                        # Only add if we can successfully retrieve the report
+                        if report_data:
+                            reports.append(
+                                {
+                                    "report_id": obj["Key"]
+                                    .split("/")[-1]
+                                    .replace(".json", ""),
+                                    "date": obj["LastModified"],
+                                    "size": obj["Size"],
+                                    "s3_key": obj["Key"],
+                                    "s3_url": f"s3://{self.bucket_name}/{obj['Key']}",
+                                    "data": report_data,  # Include the full report data
+                                }
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Skipping report due to error: {obj['Key']} - {str(e)}"
+                        )
 
             return reports
         except ClientError as e:
