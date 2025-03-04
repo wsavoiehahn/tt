@@ -179,12 +179,14 @@ function displayReports(reports) {
 
             const metrics = reportData.overall_metrics || {};
             
-            // Extract the test_case_id for delete functionality
-            const testCaseId = reportData.test_case_id || '';
+            // Extract test_case_id
+            const testCaseId = reportData.test_case_id || 
+                               (reportData.id ? String(reportData.id) : 
+                               (report.report_id ? report.report_id : 'unknown'));
             
             row.innerHTML = `
                 <td><a href="/dashboard/reports/${report.report_id}">${report.report_id.substring(0, 8)}...</a></td>
-                <td>${reportData.test_case_name || 'Unknown'}</td>
+                <td>${reportData.test_case_name || 'Unknown Test Case'}</td>
                 <td>
                     <span class="persona-badge">${personaName}</span>
                     <span class="behavior-badge">${behaviorName}</span>
