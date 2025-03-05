@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class DynamoDBService:
     """Service for managing test data in DynamoDB."""
 
-    def __init__(self, table_name="ai_call_center_tests"):
+    def __init__(self, table_name="ai-call-center-evaluator-dev-tests"):
         self.table_name = table_name
         self.dynamodb = boto3.resource("dynamodb")
         self.table = self.dynamodb.Table(table_name)

@@ -544,275 +544,292 @@ async def media_stream(websocket: WebSocket):
     Simplified media stream handler to test basic functionality.
     This version uses direct string encoding for immediate audio feedback.
     """
-    await websocket.accept()
+    try:
+        await websocket.accept()
+        logging.error("DEBUG: WebSocket connection accepted")
 
-    async def test_openai_tts():
-        """Test OpenAI TTS directly and log the results."""
-        try:
-            logger.error("TTS TEST: Testing OpenAI TTS directly")
-            from ..services.openai_service import openai_service
+        async def test_openai_tts():
+            """Test OpenAI TTS directly and log the results."""
+            try:
+                logger.error("TTS TEST: Testing OpenAI TTS directly")
+                from ..services.openai_service import openai_service
 
-            # Test basic functionality
-            test_text = "This is a test of the OpenAI text to speech system."
+                # Test basic functionality
+                test_text = "This is a test of the OpenAI text to speech system."
 
-            # Log API key info (safely)
-            api_key = openai_service.api_key
-            if api_key:
-                masked_key = (
-                    f"{api_key[:5]}...{api_key[-4:]}" if len(api_key) > 10 else "***"
-                )
-                logger.error(f"TTS TEST: Using OpenAI API key: {masked_key}")
-            else:
-                logger.error("TTS TEST: No OpenAI API key found!")
+                # Log API key info (safely)
+                api_key = openai_service.api_key
+                if api_key:
+                    masked_key = (
+                        f"{api_key[:5]}...{api_key[-4:]}"
+                        if len(api_key) > 10
+                        else "***"
+                    )
+                    logger.error(f"TTS TEST: Using OpenAI API key: {masked_key}")
+                else:
+                    logger.error("TTS TEST: No OpenAI API key found!")
 
-            # Time the API call
-            start_time = time.time()
-            audio = await openai_service.text_to_speech(test_text)
-            duration = time.time() - start_time
+                # Time the API call
+                start_time = time.time()
+                audio = await openai_service.text_to_speech(test_text)
+                duration = time.time() - start_time
 
-            if audio:
-                logger.error(
-                    f"TTS TEST: Successfully generated audio ({len(audio)} bytes) in {duration:.2f} seconds"
-                )
-                logger.error(f"TTS TEST: First 20 bytes: {audio[:20].hex()}")
-                return True
-            else:
-                logger.error("TTS TEST: Received empty audio response")
+                if audio:
+                    logger.error(
+                        f"TTS TEST: Successfully generated audio ({len(audio)} bytes) in {duration:.2f} seconds"
+                    )
+                    logger.error(f"TTS TEST: First 20 bytes: {audio[:20].hex()}")
+                    return True
+                else:
+                    logger.error("TTS TEST: Received empty audio response")
+                    return False
+            except Exception as e:
+                logger.error(f"TTS TEST ERROR: {str(e)}")
+                import traceback
+
+                logger.error(f"TTS TEST TRACEBACK: {traceback.format_exc()}")
                 return False
+
+        logger.error("DEBUG: WebSocket connection accepted for media stream")
+
+        # Extract query parameters
+        query_params = websocket.query_params
+        test_id = query_params.get("test_id")
+        call_sid = query_params.get("call_sid")
+
+        test_in_memory = test_id in evaluator_service.active_tests
+
+        # If not in memory, try to load from DynamoDB
+        if not test_in_memory:
+            logger.error(f"DEBUG: Test {test_id} not found in memory, trying DynamoDB")
+            from ..services.dynamodb_service import dynamodb_service
+
+            test_data = dynamodb_service.get_test(test_id)
+
+            if test_data:
+                logger.error(
+                    f"DEBUG: Test {test_id} found in DynamoDB, loading into memory"
+                )
+                evaluator_service.active_tests[test_id] = test_data
+                test_in_memory = True
+            else:
+                logger.error(f"DEBUG: Test {test_id} not found in DynamoDB")
+        logger.error(
+            f"DEBUG: WebSocket params - test_id: {test_id}, call_sid: {call_sid}"
+        )
+
+        if not test_id or not call_sid:
+            logger.error("DEBUG: Missing test_id or call_sid in WebSocket connection")
+            await websocket.close(code=1000)
+            return
+
+        # Check if test exists
+        if test_id not in evaluator_service.active_tests:
+            logger.error(f"DEBUG: Test {test_id} not found in active tests")
+            await websocket.close(code=1000)
+            return
+
+        # Get test data
+        test_data = evaluator_service.active_tests[test_id]
+        test_case = test_data.get("test_case", {})
+
+        # Log test questions for debugging
+        questions = test_case.get("config", {}).get("questions", [])
+        for i, q in enumerate(questions):
+            if isinstance(q, dict):
+                logger.error(f"DEBUG: Question {i+1}: {q.get('text', 'No text')}")
+            else:
+                logger.error(f"DEBUG: Question {i+1}: {q}")
+
+        # Initialize variables
+        stream_sid = None
+        messages_processed = 0
+        introduction_sent = False
+        question_sent = False
+
+        try:
+            # Run diagnostic tests
+            await diagnose_audio_issues()
+            await test_openai_tts()
+
+            # Process the media stream
+            async for message in websocket.iter_text():
+                try:
+                    data = json.loads(message)
+                    event_type = data.get("event")
+                    messages_processed += 1
+
+                    logger.error(
+                        f"DEBUG: Received WebSocket message #{messages_processed}: {event_type}"
+                    )
+
+                    # Handle Twilio stream start
+                    if event_type == "start" and not introduction_sent:
+                        stream_sid = data["start"]["streamSid"]
+                        logger.error(f"DEBUG: Stream started with SID: {stream_sid}")
+
+                        # Send intro text directly using encoder
+                        intro_text = "Starting evaluation call. Testing one two three."
+                        logger.error(f"DEBUG: Sending intro text: {intro_text}")
+
+                        # Use simple audio encoding directly in the handler
+                        audio_bytes = intro_text.encode("utf-8")
+                        encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
+
+                        # Send as media
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "event": "media",
+                                    "streamSid": stream_sid,
+                                    "media": {"payload": encoded_audio},
+                                }
+                            )
+                        )
+                        logger.error("DEBUG: Sent introduction directly")
+
+                        # Wait a moment
+                        await asyncio.sleep(2)
+
+                        # Mark introduction as sent
+                        introduction_sent = True
+
+                    # Once introduction is sent, proceed to first question
+                    if introduction_sent and stream_sid and not question_sent:
+                        # Get the first question
+                        first_question = None
+                        if questions:
+                            first_question = questions[0]
+                            if isinstance(first_question, dict):
+                                first_question = first_question.get(
+                                    "text", "No question text found."
+                                )
+                        else:
+                            first_question = "No questions found in test."
+
+                        logger.error(f"DEBUG: Sending first question: {first_question}")
+
+                        # Use simple audio encoding directly
+                        question_bytes = first_question.encode("utf-8")
+                        encoded_question = base64.b64encode(question_bytes).decode(
+                            "utf-8"
+                        )
+
+                        # Send as media
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "event": "media",
+                                    "streamSid": stream_sid,
+                                    "media": {"payload": encoded_question},
+                                }
+                            )
+                        )
+                        logger.error("DEBUG: Sent first question directly")
+
+                        # Mark question as sent
+                        question_sent = True
+
+                        # Record the question
+                        evaluator_service.record_conversation_turn(
+                            test_id=test_id,
+                            call_sid=call_sid,
+                            speaker="evaluator",
+                            text=first_question,
+                        )
+
+                        # Keep connection open to allow response
+                        await asyncio.sleep(5)  # Wait for potential response
+
+                        # Send goodbye
+                        goodbye_text = "This concludes our test. Thank you."
+                        goodbye_bytes = goodbye_text.encode("utf-8")
+                        encoded_goodbye = base64.b64encode(goodbye_bytes).decode(
+                            "utf-8"
+                        )
+
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "event": "media",
+                                    "streamSid": stream_sid,
+                                    "media": {"payload": encoded_goodbye},
+                                }
+                            )
+                        )
+                        logger.error("DEBUG: Sent goodbye directly")
+
+                        # Wait briefly before ending
+                        await asyncio.sleep(2)
+
+                        # End the call
+                        twilio_service.end_call(call_sid)
+                        logger.error("DEBUG: Call ended")
+
+                    # Handle stop event
+                    if event_type == "stop":
+                        logger.error(f"DEBUG: Stream stopped.")
+                        break
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"DEBUG: Invalid JSON: {str(e)}")
+                except Exception as e:
+                    logger.error(f"DEBUG: Error processing message: {str(e)}")
+                    import traceback
+
+                    logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
+
+        except WebSocketDisconnect:
+            logger.error("DEBUG: WebSocket disconnected")
         except Exception as e:
-            logger.error(f"TTS TEST ERROR: {str(e)}")
+            logger.error(f"DEBUG: General error: {str(e)}")
             import traceback
 
-            logger.error(f"TTS TEST TRACEBACK: {traceback.format_exc()}")
-            return False
+            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
+        finally:
+            # Cleanup
+            if call_sid in active_websockets:
+                del active_websockets[call_sid]
 
-    logger.error("DEBUG: WebSocket connection accepted for media stream")
-
-    # Extract query parameters
-    query_params = websocket.query_params
-    test_id = query_params.get("test_id")
-    call_sid = query_params.get("call_sid")
-
-    test_in_memory = test_id in evaluator_service.active_tests
-
-    # If not in memory, try to load from DynamoDB
-    if not test_in_memory:
-        logger.error(f"DEBUG: Test {test_id} not found in memory, trying DynamoDB")
-        from ..services.dynamodb_service import dynamodb_service
-
-        test_data = dynamodb_service.get_test(test_id)
-
-        if test_data:
+            # Log summary
             logger.error(
-                f"DEBUG: Test {test_id} found in DynamoDB, loading into memory"
+                f"DEBUG: Media stream ended. Total messages processed: {messages_processed}"
             )
-            evaluator_service.active_tests[test_id] = test_data
-            test_in_memory = True
-        else:
-            logger.error(f"DEBUG: Test {test_id} not found in DynamoDB")
-    logger.error(f"DEBUG: WebSocket params - test_id: {test_id}, call_sid: {call_sid}")
+            logger.error(
+                f"DEBUG: Introduction sent: {introduction_sent}, Question sent: {question_sent}"
+            )
 
-    if not test_id or not call_sid:
-        logger.error("DEBUG: Missing test_id or call_sid in WebSocket connection")
-        await websocket.close(code=1000)
-        return
+            # Finalize test
+            if test_id in evaluator_service.active_tests:
+                test_data["status"] = "completed"
+                test_data["end_time"] = time.time()
 
-    # Check if test exists
-    if test_id not in evaluator_service.active_tests:
-        logger.error(f"DEBUG: Test {test_id} not found in active tests")
-        await websocket.close(code=1000)
-        return
-
-    # Get test data
-    test_data = evaluator_service.active_tests[test_id]
-    test_case = test_data.get("test_case", {})
-
-    # Log test questions for debugging
-    questions = test_case.get("config", {}).get("questions", [])
-    for i, q in enumerate(questions):
-        if isinstance(q, dict):
-            logger.error(f"DEBUG: Question {i+1}: {q.get('text', 'No text')}")
-        else:
-            logger.error(f"DEBUG: Question {i+1}: {q}")
-
-    # Initialize variables
-    stream_sid = None
-    messages_processed = 0
-    introduction_sent = False
-    question_sent = False
-
-    try:
-        # Run diagnostic tests
-        await diagnose_audio_issues()
-        await test_openai_tts()
-
-        # Process the media stream
-        async for message in websocket.iter_text():
-            try:
-                data = json.loads(message)
-                event_type = data.get("event")
-                messages_processed += 1
-
-                logger.error(
-                    f"DEBUG: Received WebSocket message #{messages_processed}: {event_type}"
+                # Add a simple report entry if needed
+                conversation = evaluator_service.active_tests[test_id].get(
+                    "conversation", []
                 )
-
-                # Handle Twilio stream start
-                if event_type == "start" and not introduction_sent:
-                    stream_sid = data["start"]["streamSid"]
-                    logger.error(f"DEBUG: Stream started with SID: {stream_sid}")
-
-                    # Send intro text directly using encoder
-                    intro_text = "Starting evaluation call. Testing one two three."
-                    logger.error(f"DEBUG: Sending intro text: {intro_text}")
-
-                    # Use simple audio encoding directly in the handler
-                    audio_bytes = intro_text.encode("utf-8")
-                    encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
-
-                    # Send as media
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "event": "media",
-                                "streamSid": stream_sid,
-                                "media": {"payload": encoded_audio},
-                            }
-                        )
-                    )
-                    logger.error("DEBUG: Sent introduction directly")
-
-                    # Wait a moment
-                    await asyncio.sleep(2)
-
-                    # Mark introduction as sent
-                    introduction_sent = True
-
-                # Once introduction is sent, proceed to first question
-                if introduction_sent and stream_sid and not question_sent:
-                    # Get the first question
-                    first_question = None
-                    if questions:
-                        first_question = questions[0]
-                        if isinstance(first_question, dict):
-                            first_question = first_question.get(
-                                "text", "No question text found."
-                            )
-                    else:
-                        first_question = "No questions found in test."
-
-                    logger.error(f"DEBUG: Sending first question: {first_question}")
-
-                    # Use simple audio encoding directly
-                    question_bytes = first_question.encode("utf-8")
-                    encoded_question = base64.b64encode(question_bytes).decode("utf-8")
-
-                    # Send as media
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "event": "media",
-                                "streamSid": stream_sid,
-                                "media": {"payload": encoded_question},
-                            }
-                        )
-                    )
-                    logger.error("DEBUG: Sent first question directly")
-
-                    # Mark question as sent
-                    question_sent = True
-
-                    # Record the question
+                if not conversation:
                     evaluator_service.record_conversation_turn(
                         test_id=test_id,
                         call_sid=call_sid,
                         speaker="evaluator",
-                        text=first_question,
+                        text="System message: Test completed with simplified handler.",
                     )
 
-                    # Keep connection open to allow response
-                    await asyncio.sleep(5)  # Wait for potential response
+                # Generate report
+                conversation = evaluator_service.active_tests[test_id].get(
+                    "conversation", []
+                )
+                await evaluator_service.process_call(test_id, call_sid, conversation)
 
-                    # Send goodbye
-                    goodbye_text = "This concludes our test. Thank you."
-                    goodbye_bytes = goodbye_text.encode("utf-8")
-                    encoded_goodbye = base64.b64encode(goodbye_bytes).decode("utf-8")
-
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "event": "media",
-                                "streamSid": stream_sid,
-                                "media": {"payload": encoded_goodbye},
-                            }
-                        )
-                    )
-                    logger.error("DEBUG: Sent goodbye directly")
-
-                    # Wait briefly before ending
-                    await asyncio.sleep(2)
-
-                    # End the call
-                    twilio_service.end_call(call_sid)
-                    logger.error("DEBUG: Call ended")
-
-                # Handle stop event
-                if event_type == "stop":
-                    logger.error(f"DEBUG: Stream stopped.")
-                    break
-
-            except json.JSONDecodeError as e:
-                logger.error(f"DEBUG: Invalid JSON: {str(e)}")
-            except Exception as e:
-                logger.error(f"DEBUG: Error processing message: {str(e)}")
-                import traceback
-
-                logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
-
+                logger.error(f"DEBUG: Test {test_id} completed")
     except WebSocketDisconnect:
-        logger.error("DEBUG: WebSocket disconnected")
+        print(f"WebSocket disconnected")
     except Exception as e:
-        logger.error(f"DEBUG: General error: {str(e)}")
+        print(f"WebSocket error: {str(e)}")
         import traceback
 
-        logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
-    finally:
-        # Cleanup
-        if call_sid in active_websockets:
-            del active_websockets[call_sid]
-
-        # Log summary
-        logger.error(
-            f"DEBUG: Media stream ended. Total messages processed: {messages_processed}"
-        )
-        logger.error(
-            f"DEBUG: Introduction sent: {introduction_sent}, Question sent: {question_sent}"
-        )
-
-        # Finalize test
-        if test_id in evaluator_service.active_tests:
-            test_data["status"] = "completed"
-            test_data["end_time"] = time.time()
-
-            # Add a simple report entry if needed
-            conversation = evaluator_service.active_tests[test_id].get(
-                "conversation", []
-            )
-            if not conversation:
-                evaluator_service.record_conversation_turn(
-                    test_id=test_id,
-                    call_sid=call_sid,
-                    speaker="evaluator",
-                    text="System message: Test completed with simplified handler.",
-                )
-
-            # Generate report
-            conversation = evaluator_service.active_tests[test_id].get(
-                "conversation", []
-            )
-            await evaluator_service.process_call(test_id, call_sid, conversation)
-
-            logger.error(f"DEBUG: Test {test_id} completed")
+        print(f"WebSocket traceback: {traceback.format_exc()}")
 
 
 async def diagnose_audio_issues():

@@ -339,36 +339,49 @@ class TwilioService:
             return default_number
 
     def generate_stream_twiml(self, test_id: str, call_sid: str) -> str:
-        """
-        Generate TwiML for connecting to a media stream.
-        """
-        # Get callback URL from config
-        callback_url = self.callback_url
-        if not callback_url:
-            callback_url = "https://example.com"  # Default for testing
-            logger.error(
-                "DEBUG: No callback URL found in generate_stream_twiml, using default"
-            )
+        """Generate TwiML for directly asking the first question."""
+        # Get the first question for this test
+        from ..services.evaluator import evaluator_service
 
-        # Create VoiceResponse object
+        question = "Hello, this is a test question."
+
+        # If the test exists, get the actual first question
+        if test_id in evaluator_service.active_tests:
+            test_data = evaluator_service.active_tests[test_id]
+            test_case = test_data.get("test_case", {})
+            questions = test_case.get("config", {}).get("questions", [])
+
+            if questions:
+                first_question = questions[0]
+                if isinstance(first_question, dict):
+                    first_question = first_question.get("text", "")
+                else:
+                    first_question = first_question
+
+                # Get special instructions if any
+                special_instructions = test_case.get("config", {}).get(
+                    "special_instructions"
+                )
+
+                if special_instructions:
+                    question = f"{special_instructions}. {first_question}"
+                else:
+                    question = first_question
+
+        # Create TwiML response
         response = VoiceResponse()
 
-        # Add initial message
+        # Add an introduction and the first question
         response.say("Starting evaluation call.")
+        response.pause(length=1)
+        response.say(question)
 
-        # Create media stream URL
-        stream_url = f"{callback_url}/webhooks/media-stream?test_id={test_id}&call_sid={call_sid}"
-        logger.error(f"DEBUG: Media stream URL: {stream_url}")
+        # Add a recording instruction
+        response.record(timeout=10, transcribe=True)
 
-        # Create Connect and Stream objects
-        connect = Connect()
-        stream = Stream(url=stream_url)
-
-        # Add Stream to Connect and Connect to response
-        connect.append(stream)
-        response.append(connect)
-
-        logger.error(f"DEBUG: Generated stream TwiML: {str(response)}")
+        # Add a goodbye message
+        response.pause(length=1)
+        response.say("Thank you for your response. This concludes our test.")
 
         return str(response)
 
@@ -449,41 +462,6 @@ class TwilioService:
         except Exception as e:
             logger.error(f"Error getting recordings: {str(e)}")
             return []
-
-    def generate_stream_twiml(self, test_id: str, call_sid: str) -> str:
-        """
-        Generate TwiML for connecting to a media stream.
-
-        Args:
-            test_id: Test case ID
-            call_sid: Call SID
-
-        Returns:
-            TwiML response as string
-        """
-        # Get callback URL from config
-        callback_url = self.callback_url
-        if not callback_url:
-            callback_url = "https://example.com"  # Default for testing
-            logger.warning("No callback URL found, using default")
-
-        # Create VoiceResponse object
-        response = VoiceResponse()
-
-        # Add initial message
-        response.say("Starting evaluation call.", voice="alice")
-
-        # Create Connect and Stream objects
-        connect = Connect()
-        stream = Stream(
-            url=f"{callback_url}/webhooks/media-stream?test_id={test_id}&call_sid={call_sid}"
-        )
-
-        # Add Stream to Connect and Connect to response
-        connect.append(stream)
-        response.append(connect)
-
-        return str(response)
 
     def handle_recording_completed(
         self, recording_sid: str, recording_url: str, call_sid: str
