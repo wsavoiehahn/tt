@@ -281,6 +281,57 @@ class OpenAIService:
         }}
         """
 
+    async def text_to_speech(self, text: str, voice: str = "nova") -> bytes:
+        """
+        Convert text to speech using OpenAI's TTS API.
+
+        Args:
+            text: The text to convert to speech
+            voice: The voice to use (alloy, echo, fable, onyx, nova, shimmer)
+
+        Returns:
+            Audio data as bytes
+        """
+        try:
+            import requests
+
+            url = "https://api.openai.com/v1/audio/speech"
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+            data = {
+                "model": "tts-1",
+                "input": text,
+                "voice": voice,
+                "response_format": "mp3",
+            }
+
+            logger.error(f"DEBUG: Sending TTS request for text: {text[:50]}...")
+            response = requests.post(url, headers=headers, json=data)
+
+            if response.status_code != 200:
+                logger.error(f"DEBUG: Error in text_to_speech: {response.text}")
+                raise Exception(f"Error in text_to_speech: {response.status_code}")
+
+            # Convert MP3 to WAV for Twilio's mulaw format
+            mp3_audio = response.content
+            logger.error(f"DEBUG: Received MP3 audio of size: {len(mp3_audio)} bytes")
+
+            # Use the audio conversion utility from utils.audio
+            from ..utils.audio import convert_mp3_to_wav
+
+            wav_audio = convert_mp3_to_wav(mp3_audio)
+            logger.error(f"DEBUG: Converted to WAV of size: {len(wav_audio)} bytes")
+
+            return wav_audio
+        except Exception as e:
+            logger.error(f"DEBUG: Error in text_to_speech: {str(e)}")
+            import traceback
+
+            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
+            raise
+
 
 # Create a singleton instance
 openai_service = OpenAIService()

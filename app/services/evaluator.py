@@ -101,12 +101,17 @@ class EvaluatorService:
         Returns:
             TestCaseReport containing evaluation results
         """
-        logger.info(f"Executing test case: {test_case.name}")
+        logger.error(
+            f"DEBUG: Executing test case: {test_case.name}, ID: {test_case.id}"
+        )
 
         start_time = time.time()
         test_id = str(test_case.id)
 
-        # Initialize test tracking
+        # Log test_case details for debugging
+        logger.error(f"DEBUG: Test case details: {test_case.dict()}")
+
+        # Initialize test tracking BEFORE initiating the call
         self.active_tests[test_id] = {
             "test_case": test_case.dict(),
             "status": "starting",
@@ -114,6 +119,9 @@ class EvaluatorService:
             "current_question_index": 0,
             "questions_evaluated": [],
         }
+
+        # Log active tests after initialization
+        logger.error(f"DEBUG: Active tests after initialization: {self.active_tests}")
 
         # Save test case configuration
         s3_service.save_test_case(test_case.dict(), test_id)
@@ -124,7 +132,7 @@ class EvaluatorService:
 
         if not persona or not behavior:
             logger.error(
-                f"Invalid persona or behavior: {test_case.config.persona_name}, {test_case.config.behavior_name}"
+                f"DEBUG: Invalid persona or behavior: {test_case.config.persona_name}, {test_case.config.behavior_name}"
             )
             return TestCaseReport(
                 test_case_id=test_case.id,
@@ -147,14 +155,24 @@ class EvaluatorService:
             # Import at function level to avoid circular imports
             from .twilio_service import twilio_service
 
+            logger.error(
+                f"DEBUG: Before initiating call for test {test_id}, status: {self.active_tests[test_id]['status']}"
+            )
+
             # Initiate the outbound call
             call_result = twilio_service.initiate_call(test_id)
 
+            logger.error(f"DEBUG: Call initiation result: {call_result}")
+
             if "error" in call_result:
-                logger.error(f"Failed to initiate call: {call_result['error']}")
+                logger.error(f"DEBUG: Failed to initiate call: {call_result['error']}")
                 # Mark test as failed
                 self.active_tests[test_id]["status"] = "failed"
                 self.active_tests[test_id]["error"] = call_result["error"]
+
+                logger.error(
+                    f"DEBUG: Test status after error: {self.active_tests[test_id]['status']}"
+                )
 
                 return TestCaseReport(
                     test_case_id=test_case.id,
@@ -174,8 +192,22 @@ class EvaluatorService:
                 )
 
             call_sid = call_result["call_sid"]
+
+            # Verify and confirm test status
+            if self.active_tests[test_id]["status"] != "waiting_for_call":
+                logger.error(
+                    f"DEBUG: Test status not properly set to waiting_for_call! Current status: {self.active_tests[test_id]['status']}"
+                )
+                # Force the status to be set correctly
+                self.active_tests[test_id]["status"] = "waiting_for_call"
+                logger.error(f"DEBUG: Forced test status to waiting_for_call")
+
             self.active_tests[test_id]["call_sid"] = call_sid
-            self.active_tests[test_id]["status"] = "in_progress"
+
+            # Log status again
+            logger.error(
+                f"DEBUG: Test status after call initiated: {self.active_tests[test_id]}"
+            )
 
             # Update test with call information
             if "calls" not in self.active_tests[test_id]:
@@ -185,9 +217,9 @@ class EvaluatorService:
                 "start_time": time.time(),
             }
 
-            logger.info(f"Call initiated: {call_sid} for test {test_id}")
+            logger.error(f"DEBUG: Call initiated: {call_sid} for test {test_id}")
 
-            # Create a placeholder report - the real report will be generated after the call completes
+            # Create a placeholder report
             report = TestCaseReport(
                 test_case_id=test_case.id,
                 test_case_name=test_case.name,
@@ -209,12 +241,16 @@ class EvaluatorService:
             report_id = str(report.id)
             s3_service.save_report(report.dict(), report_id)
 
-            logger.info(f"Initial report created: {report_id}")
+            logger.error(f"DEBUG: Initial report created: {report_id}")
 
             return report
 
         except Exception as e:
-            logger.error(f"Error in execute_test_case: {str(e)}")
+            logger.error(f"DEBUG: Error in execute_test_case: {str(e)}")
+            import traceback
+
+            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
+
             # Mark test as failed
             self.active_tests[test_id]["status"] = "failed"
             self.active_tests[test_id]["error"] = str(e)
@@ -463,6 +499,74 @@ class EvaluatorService:
             response_time=response_time,
             successful=True,
         )
+
+    async def generate_empty_report(
+        self, test_id: str, error_message: str
+    ) -> Optional[TestCaseReport]:
+        """
+        Generate an empty report with error message when a test fails.
+
+        Args:
+            test_id: Test case ID
+            error_message: Error message to include in the report
+
+        Returns:
+            Empty TestCaseReport with error information
+        """
+        logger.info(
+            f"Generating empty report for test {test_id} with error: {error_message}"
+        )
+
+        if test_id not in self.active_tests:
+            logger.error(f"Test {test_id} not found in active tests")
+            return None
+
+        test_data = self.active_tests[test_id]
+        test_case = TestCase(**test_data["test_case"])
+        call_sid = test_data.get("call_sid", "unknown")
+
+        # Calculate execution time
+        execution_time = test_data.get("end_time", time.time()) - test_data.get(
+            "start_time", time.time()
+        )
+
+        # Create error metrics
+        error_metrics = EvaluationMetrics(
+            accuracy=0.0,
+            empathy=0.0,
+            response_time=0.0,
+            successful=False,
+            error_message=error_message,
+        )
+
+        # Create an empty question evaluation
+        empty_question_eval = QuestionEvaluation(
+            question="Test did not complete", conversation=[], metrics=error_metrics
+        )
+
+        # Create report
+        report = TestCaseReport(
+            test_case_id=test_case.id,
+            test_case_name=test_case.name,
+            persona_name=test_case.config.persona_name,
+            behavior_name=test_case.config.behavior_name,
+            questions_evaluated=[empty_question_eval],
+            overall_metrics=error_metrics,
+            execution_time=execution_time,
+            special_instructions=test_case.config.special_instructions,
+        )
+
+        # Save report
+        report_id = str(report.id)
+        s3_service.save_report(report.dict(), report_id)
+
+        # Update test status
+        self.active_tests[test_id]["status"] = "failed"
+        self.active_tests[test_id]["error"] = error_message
+
+        logger.info(f"Empty report generated for test {test_id}, report {report_id}")
+
+        return report
 
     def record_conversation_turn(
         self,

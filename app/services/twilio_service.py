@@ -1,9 +1,10 @@
 # app/services/twilio_service.py
 import os
 import logging
+import json
 from typing import Dict, Any, Optional, List
 from twilio.rest import Client
-from twilio.twiml.voice_response import VoiceResponse, Gather
+from twilio.twiml.voice_response import VoiceResponse, Gather, Start, Connect, Stream
 import uuid
 import time
 import asyncio
@@ -31,18 +32,18 @@ class TwilioService:
         # Track active calls
         self.active_calls = {}
 
-    # Update the initiate_call method with detailed ERROR logging
+        # Log initialization
+        logger.error(
+            f"DEBUG: TwilioService initialized with account_sid: {self.account_sid[:5]}***, target number: {self.ai_service_number}, callback URL: {self.callback_url}"
+        )
+
     def initiate_call(self, test_id: str) -> Dict[str, Any]:
         """
         Initiate a call to the AI service agent with the test questions.
-
-        Args:
-            test_id: Unique identifier for the test case
-
-        Returns:
-            Dictionary with call SID and status
         """
         try:
+            logger.error(f"DEBUG: Initiating call for test_id: {test_id}")
+
             # Get the AI service phone number from parameter store
             ai_service_number = self.ai_service_number
 
@@ -54,138 +55,92 @@ class TwilioService:
                 if ai_service_number:
                     self.ai_service_number = ai_service_number
                     logger.error(
-                        f"DEBUG - Updated target phone number to: {ai_service_number}"
+                        f"DEBUG: Updated target phone number to: {ai_service_number}"
                     )
 
             if not ai_service_number:
-                error_msg = "AI service phone number not configured at /twilio/target_phone_number"
-                logger.error(error_msg)
+                error_msg = "AI service phone number not configured"
+                logger.error(f"DEBUG: {error_msg}")
                 return {"error": error_msg, "test_id": test_id, "status": "failed"}
 
             # Get outbound number
             from_number = self.get_outbound_number()
-            logger.error(f"DEBUG - Using outbound number: {from_number}")
+            logger.error(f"DEBUG: Using outbound number: {from_number}")
 
             # Get callback URL from config
             callback_url = self.callback_url
             if not callback_url:
                 callback_url = "https://example.com"  # Default for testing
-                logger.error("DEBUG - No callback URL found, using default")
+                logger.error("DEBUG: No callback URL found, using default")
             else:
-                logger.error(f"DEBUG - Using callback URL: {callback_url}")
+                logger.error(f"DEBUG: Using callback URL: {callback_url}")
 
             # Import at function level to avoid circular imports
             from ..services.evaluator import evaluator_service
 
-            # Get test questions from evaluator service
-            test_questions = []
+            # Dump active tests before updating
+            logger.error(
+                f"DEBUG: Active tests before update: {evaluator_service.active_tests}"
+            )
+
+            # Check if the test exists in active_tests
             if test_id in evaluator_service.active_tests:
-                test_data = evaluator_service.active_tests[test_id]
-                test_case = test_data.get("test_case", {})
-                config_data = test_case.get("config", {})
-                questions = config_data.get("questions", [])
-
-                # Extract questions
-                for q in questions:
-                    if isinstance(q, dict) and "text" in q:
-                        test_questions.append(q["text"])
-                    elif isinstance(q, str):
-                        test_questions.append(q)
-
-            # Fallback if no questions found
-            if not test_questions:
-                logger.error(
-                    f"DEBUG - No questions found for test {test_id}, using default"
+                previous_status = evaluator_service.active_tests[test_id].get(
+                    "status", "unknown"
                 )
-                test_questions = ["How can I help you today?"]
+                evaluator_service.active_tests[test_id]["status"] = "waiting_for_call"
+                logger.error(
+                    f"DEBUG: Updated test {test_id} status from {previous_status} to waiting_for_call"
+                )
+                logger.error(
+                    f"DEBUG: Test data after update: {evaluator_service.active_tests[test_id]}"
+                )
             else:
+                logger.error(f"DEBUG: Test {test_id} not found in active_tests")
+                # Try to get details of all active tests to see what's going on
                 logger.error(
-                    f"DEBUG - Found {len(test_questions)} questions for test {test_id}"
+                    f"DEBUG: Current active tests: {evaluator_service.active_tests}"
                 )
 
-            # Apply special instructions if they exist
-            special_instructions = None
-            if test_id in evaluator_service.active_tests:
-                test_data = evaluator_service.active_tests[test_id]
-                test_case = test_data.get("test_case", {})
-                config_data = test_case.get("config", {})
-                special_instructions = config_data.get("special_instructions")
-                if special_instructions:
-                    logger.error(
-                        f"DEBUG - Using special instructions: {special_instructions}"
-                    )
+            # Create a simpler TwiML for call initiation
+            response = VoiceResponse()
+            response.say("Connecting to evaluation system...")
 
-            # Create TwiML for the call with questions
-            twiml = "<Response>"
-            twiml += "<Say>This is an automated call for evaluation purposes.</Say>"
-            twiml += "<Pause length='2'/>"
-
-            # Add each question with pauses between them
-            for i, question in enumerate(test_questions):
-                # Apply special instructions if needed
-                if special_instructions and i == 0:  # Only for first question
-                    modified_question = f"{question} {special_instructions}"
-                else:
-                    modified_question = question
-
-                twiml += f"<Say>{modified_question}</Say>"
-                twiml += "<Pause length='1'/>"
-
-                # Record the response
-                record_action = f"{callback_url}/webhooks/response-recorded?test_id={test_id}&question_index={i}"
-                logger.error(
-                    f"DEBUG - Record action URL for question {i}: {record_action}"
-                )
-
-                twiml += f"""
-                <Record 
-                    action="{record_action}" 
-                    maxLength="120" 
-                    playBeep="false"
-                    timeout="5"
-                />
-                """
-                twiml += "<Pause length='1'/>"
-
-            # Close the response
-            twiml += "<Say>Thank you for your responses. Goodbye.</Say>"
-            twiml += "</Response>"
-
-            logger.error(
-                f"DEBUG - Initiating call from {from_number} to {ai_service_number} for test {test_id}"
+            # Set up the call status callback
+            status_callback_url = (
+                f"{callback_url}/webhooks/call-status?test_id={test_id}"
             )
+            logger.error(f"DEBUG: Status callback URL: {status_callback_url}")
 
-            # Log a simplified version of the TwiML to avoid excessive log length
-            logger.error(
-                f"DEBUG - TwiML Length: {len(twiml)} chars, First 100 chars: {twiml[:100]}..."
-            )
+            # URL for the call-started webhook
+            call_started_url = f"{callback_url}/webhooks/call-started?test_id={test_id}"
+            logger.error(f"DEBUG: Call started URL: {call_started_url}")
 
-            # Set up callback URLs
-            recording_status_callback = f"{callback_url}/webhooks/recording-status"
-            status_callback = f"{callback_url}/webhooks/call-status?test_id={test_id}"
+            # Log the TwiML
+            logger.error(f"DEBUG: Initial TwiML: {str(response)}")
 
-            logger.error(
-                f"DEBUG - Recording status callback: {recording_status_callback}"
-            )
-            logger.error(f"DEBUG - Call status callback: {status_callback}")
-
-            # Initiate the call
+            # Initiate the call with the simplified TwiML
             try:
                 call = self.client.calls.create(
-                    twiml=twiml,
                     to=ai_service_number,
                     from_=from_number,
-                    record=True,
-                    recording_status_callback=recording_status_callback,
-                    recording_status_callback_event=["completed"],
-                    status_callback=status_callback,
-                    status_callback_event=["answered", "completed"],
+                    twiml=str(response),
+                    status_callback=status_callback_url,
+                    status_callback_event=[
+                        "queued",
+                        "initiated",
+                        "ringing",
+                        "answered",
+                        "completed",
+                    ],
                     status_callback_method="POST",
+                    url=call_started_url,
+                    method="POST",
                 )
-                logger.error(f"DEBUG - Call created successfully with SID: {call.sid}")
+                logger.error(f"DEBUG: Call created successfully with SID: {call.sid}")
             except Exception as call_error:
                 logger.error(
-                    f"DEBUG - Twilio API error creating call: {str(call_error)}"
+                    f"DEBUG: Twilio API error creating call: {str(call_error)}"
                 )
                 raise  # Re-raise to be caught by outer exception handler
 
@@ -196,13 +151,17 @@ class TwilioService:
                 "start_time": time.time(),
                 "to": ai_service_number,
                 "from": from_number,
-                "recordings": [],
-                "questions": test_questions,
             }
 
             logger.error(
-                f"DEBUG - Call initiated: {call.sid} for test {test_id} to {ai_service_number}"
+                f"DEBUG: Call initiated: {call.sid} for test {test_id} to {ai_service_number}"
             )
+
+            # Check active tests once more to confirm status update persisted
+            if test_id in evaluator_service.active_tests:
+                logger.error(
+                    f"DEBUG: Test {test_id} status after call initiation: {evaluator_service.active_tests[test_id].get('status')}"
+                )
 
             return {
                 "call_sid": call.sid,
@@ -212,12 +171,66 @@ class TwilioService:
             }
 
         except Exception as e:
-            logger.error(f"ERROR in initiate_call: {str(e)}")
+            logger.error(f"DEBUG: ERROR in initiate_call: {str(e)}")
             # Log detailed exception information including traceback
             import traceback
 
-            logger.error(f"ERROR TRACEBACK: {traceback.format_exc()}")
+            logger.error(f"DEBUG: ERROR TRACEBACK: {traceback.format_exc()}")
             return {"error": str(e), "test_id": test_id, "status": "failed"}
+
+    def get_outbound_number(self) -> str:
+        """Get an available Twilio number for outbound calling."""
+        try:
+            # Get first available phone number from account
+            incoming_phone_numbers = self.client.incoming_phone_numbers.list(limit=1)
+            if incoming_phone_numbers:
+                return incoming_phone_numbers[0].phone_number
+            else:
+                # Fallback to default number
+                default_number = config.get_parameter("/twilio/phone_number")
+                logger.error(f"DEBUG: Using default outbound number: {default_number}")
+                return default_number
+        except Exception as e:
+            logger.error(f"DEBUG: Error getting outbound number: {str(e)}")
+            default_number = config.get_parameter("/twilio/phone_number")
+            logger.error(
+                f"DEBUG: Falling back to default outbound number: {default_number}"
+            )
+            return default_number
+
+    def generate_stream_twiml(self, test_id: str, call_sid: str) -> str:
+        """
+        Generate TwiML for connecting to a media stream.
+        """
+        # Get callback URL from config
+        callback_url = self.callback_url
+        if not callback_url:
+            callback_url = "https://example.com"  # Default for testing
+            logger.error(
+                "DEBUG: No callback URL found in generate_stream_twiml, using default"
+            )
+
+        # Create VoiceResponse object
+        response = VoiceResponse()
+
+        # Add initial message
+        response.say("Starting evaluation call.")
+
+        # Create media stream URL
+        stream_url = f"{callback_url}/webhooks/media-stream?test_id={test_id}&call_sid={call_sid}"
+        logger.error(f"DEBUG: Media stream URL: {stream_url}")
+
+        # Create Connect and Stream objects
+        connect = Connect()
+        stream = Stream(url=stream_url)
+
+        # Add Stream to Connect and Connect to response
+        connect.append(stream)
+        response.append(connect)
+
+        logger.error(f"DEBUG: Generated stream TwiML: {str(response)}")
+
+        return str(response)
 
     def get_outbound_number(self) -> str:
         """Get an available Twilio number for outbound calling."""
@@ -288,6 +301,8 @@ class TwilioService:
 
                 # Update local tracking
                 if call_sid in self.active_calls:
+                    if "recordings" not in self.active_calls[call_sid]:
+                        self.active_calls[call_sid]["recordings"] = []
                     self.active_calls[call_sid]["recordings"].append(recording.sid)
 
             return result
@@ -295,45 +310,38 @@ class TwilioService:
             logger.error(f"Error getting recordings: {str(e)}")
             return []
 
-    def generate_twiml_for_question(
-        self, question: str, test_id: str, call_sid: str
-    ) -> str:
+    def generate_stream_twiml(self, test_id: str, call_sid: str) -> str:
         """
-        Generate TwiML for asking a question.
+        Generate TwiML for connecting to a media stream.
 
         Args:
-            question: The question to ask
             test_id: Test case ID
             call_sid: Call SID
 
         Returns:
             TwiML response as string
         """
+        # Get callback URL from config
+        callback_url = self.callback_url
+        if not callback_url:
+            callback_url = "https://example.com"  # Default for testing
+            logger.warning("No callback URL found, using default")
+
+        # Create VoiceResponse object
         response = VoiceResponse()
 
-        # Pause for a moment to simulate natural conversation
-        response.pause(length=1)
+        # Add initial message
+        response.say("Starting evaluation call.", voice="alice")
 
-        # Say the question
-        response.say(question, voice="alice")
-
-        # Record the response
-        response.record(
-            action=f"{self.callback_url}/webhooks/response-recorded?test_id={test_id}&call_sid={call_sid}",
-            timeout=10,
-            maxLength=60,
-            playBeep=False,
-            trim="trim-silence",
+        # Create Connect and Stream objects
+        connect = Connect()
+        stream = Stream(
+            url=f"{callback_url}/webhooks/media-stream?test_id={test_id}&call_sid={call_sid}"
         )
 
-        # Add a failsafe gather in case recording doesn't trigger
-        gather = Gather(
-            action=f"{self.callback_url}/webhooks/response-gathered?test_id={test_id}&call_sid={call_sid}",
-            timeout=15,
-            input="speech",
-        )
-        gather.say("I'm waiting for your response.", voice="alice")
-        response.append(gather)
+        # Add Stream to Connect and Connect to response
+        connect.append(stream)
+        response.append(connect)
 
         return str(response)
 
