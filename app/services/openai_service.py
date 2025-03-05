@@ -283,7 +283,7 @@ class OpenAIService:
 
     async def text_to_speech(self, text: str, voice: str = "nova") -> bytes:
         """
-        Convert text to speech using OpenAI's TTS API.
+        Convert text to speech using OpenAI's TTS API with enhanced error handling.
 
         Args:
             text: The text to convert to speech
@@ -300,6 +300,18 @@ class OpenAIService:
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             }
+
+            # Log key details (first 5 chars for debugging)
+            logger.error(f"TTS: Using API key (first 5): {self.api_key[:5]}")
+            logger.error(
+                f"TTS: Converting text to speech: '{text[:50]}...' using voice: {voice}"
+            )
+
+            # Ensure text isn't empty
+            if not text or len(text.strip()) == 0:
+                logger.error(f"TTS ERROR: Empty text provided for TTS")
+                return self._generate_fallback_audio("Error: Empty text provided")
+
             data = {
                 "model": "tts-1",
                 "input": text,
@@ -307,30 +319,152 @@ class OpenAIService:
                 "response_format": "mp3",
             }
 
-            logger.error(f"DEBUG: Sending TTS request for text: {text[:50]}...")
-            response = requests.post(url, headers=headers, json=data)
+            logger.error(f"TTS: Sending request to OpenAI TTS API")
+            start_time = time.time()
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+            duration = time.time() - start_time
+            logger.error(
+                f"TTS: Received response in {duration:.2f} seconds with status: {response.status_code}"
+            )
 
             if response.status_code != 200:
-                logger.error(f"DEBUG: Error in text_to_speech: {response.text}")
-                raise Exception(f"Error in text_to_speech: {response.status_code}")
+                logger.error(
+                    f"TTS ERROR: Non-200 response from OpenAI: {response.status_code}"
+                )
+                logger.error(f"TTS ERROR: Response content: {response.text}")
+                return self._generate_fallback_audio(
+                    f"Error: TTS API returned status {response.status_code}"
+                )
+
+            # Get content length
+            content_length = len(response.content)
+            logger.error(f"TTS: Received audio content of size: {content_length} bytes")
+
+            # Validate we got actual audio data
+            if content_length < 100:  # Suspiciously small for audio
+                logger.error(
+                    f"TTS WARNING: Received suspiciously small audio data: {content_length} bytes"
+                )
+                logger.error(
+                    f"TTS WARNING: First 50 bytes: {response.content[:50].hex()}"
+                )
+
+                # Check if this looks like JSON error instead of audio
+                try:
+                    if response.content.startswith(b"{"):
+                        error_json = response.json()
+                        logger.error(
+                            f"TTS ERROR: Received JSON error instead of audio: {error_json}"
+                        )
+                        return self._generate_fallback_audio(
+                            "Error: Received JSON error instead of audio"
+                        )
+                except:
+                    pass
+
+            # Verify this is actually an MP3 (should start with ID3 or with MP3 sync word 0xFF 0xFB)
+            if not (
+                response.content.startswith(b"ID3")
+                or (len(response.content) > 2 and response.content[:2] == b"\xFF\xFB")
+            ):
+                logger.error(
+                    f"TTS WARNING: Response does not appear to be valid MP3 data. First 10 bytes: {response.content[:10].hex()}"
+                )
+
+            # Log success
+            logger.error(f"TTS: Successfully received audio data. Converting to WAV.")
 
             # Convert MP3 to WAV for Twilio's mulaw format
             mp3_audio = response.content
-            logger.error(f"DEBUG: Received MP3 audio of size: {len(mp3_audio)} bytes")
 
             # Use the audio conversion utility from utils.audio
-            from ..utils.audio import convert_mp3_to_wav
+            try:
+                from ..utils.audio import convert_mp3_to_wav
 
-            wav_audio = convert_mp3_to_wav(mp3_audio)
-            logger.error(f"DEBUG: Converted to WAV of size: {len(wav_audio)} bytes")
+                wav_audio = convert_mp3_to_wav(mp3_audio)
+                logger.error(f"TTS: Converted to WAV of size: {len(wav_audio)} bytes")
 
-            return wav_audio
+                # Verify WAV header
+                if (
+                    len(wav_audio) > 12
+                    and wav_audio[:4] == b"RIFF"
+                    and wav_audio[8:12] == b"WAVE"
+                ):
+                    logger.error(f"TTS: WAV file appears valid (has RIFF/WAVE header)")
+                else:
+                    logger.error(
+                        f"TTS WARNING: Converted WAV may be invalid. First 12 bytes: {wav_audio[:12].hex()}"
+                    )
+
+                return wav_audio
+            except Exception as conv_error:
+                logger.error(
+                    f"TTS ERROR: Failed to convert MP3 to WAV: {str(conv_error)}"
+                )
+                import traceback
+
+                logger.error(f"TTS CONVERSION ERROR: {traceback.format_exc()}")
+
+                # Return the MP3 audio as fallback (might work with some Twilio configurations)
+                logger.error(f"TTS: Returning original MP3 audio as fallback")
+                return mp3_audio
+
         except Exception as e:
-            logger.error(f"DEBUG: Error in text_to_speech: {str(e)}")
+            logger.error(f"TTS ERROR: Failed to generate speech: {str(e)}")
             import traceback
 
-            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
-            raise
+            logger.error(f"TTS ERROR TRACEBACK: {traceback.format_exc()}")
+            return self._generate_fallback_audio(f"Error generating speech: {str(e)}")
+
+    def _generate_fallback_audio(
+        self, error_message: str = "Audio generation failed"
+    ) -> bytes:
+        """Generate a simple audio fallback when TTS fails."""
+        logger.error(
+            f"TTS FALLBACK: Generating fallback audio for message: '{error_message}'"
+        )
+
+        try:
+            import struct
+            import math
+
+            # Generate 1 second of a simple tone (8kHz, mono, 8-bit)
+            rate = 8000
+            duration = 2.0  # 2 seconds
+            samples = int(rate * duration)
+            audio_data = bytearray()
+
+            # Add a WAV header
+            audio_data.extend(b"RIFF")
+            audio_data.extend(struct.pack("<I", 36 + samples))
+            audio_data.extend(b"WAVE")
+            audio_data.extend(b"fmt ")
+            audio_data.extend(struct.pack("<I", 16))  # Size of fmt chunk
+            audio_data.extend(struct.pack("<H", 1))  # PCM format
+            audio_data.extend(struct.pack("<H", 1))  # Mono
+            audio_data.extend(struct.pack("<I", rate))  # Sample rate
+            audio_data.extend(struct.pack("<I", rate))  # Byte rate
+            audio_data.extend(struct.pack("<H", 1))  # Block align
+            audio_data.extend(struct.pack("<H", 8))  # Bits per sample
+            audio_data.extend(b"data")
+            audio_data.extend(struct.pack("<I", samples))
+
+            # Generate simple tone at 440Hz
+            for i in range(samples):
+                value = int(127 + 127 * math.sin(2 * math.pi * 440 * i / rate))
+                audio_data.append(value & 0xFF)
+
+            logger.error(
+                f"TTS FALLBACK: Generated fallback audio of size {len(audio_data)} bytes"
+            )
+            return bytes(audio_data)
+        except Exception as e:
+            logger.error(
+                f"TTS FALLBACK ERROR: Failed to generate fallback audio: {str(e)}"
+            )
+            # Return the smallest valid WAV file possible
+            logger.error(f"TTS FALLBACK: Returning minimal WAV file")
+            return b"RIFF\x24\x00\x00\x00WAVE\x10\x00\x00\x00\x01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x08\x00data\x00\x00\x00\x00"
 
 
 # Create a singleton instance
