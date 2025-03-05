@@ -47,11 +47,20 @@ async def call_started(request: Request):
     # Parse the request form data
     form_data = await request.form()
     call_sid = form_data.get("CallSid")
-    test_id = form_data.get("test_id")
+
+    # Extract test_id from query parameters - this is crucial
+    test_id = request.query_params.get("test_id")
+
+    # If not in query params, try form data
+    if not test_id:
+        test_id = form_data.get("test_id")
 
     logger.error(
         f"DEBUG: Call started webhook received - CallSid: {call_sid}, test_id: {test_id}"
     )
+    logger.error(f"DEBUG: Request URL: {request.url}")
+    logger.error(f"DEBUG: Query params: {request.query_params}")
+    logger.error(f"DEBUG: Form data keys: {form_data.keys()}")
 
     # Dump all active tests to the logs for debugging
     logger.error(f"DEBUG: Active tests dump: {evaluator_service.active_tests}")
@@ -74,6 +83,11 @@ async def call_started(request: Request):
         if waiting_tests:
             test_id = waiting_tests[0][0]
             logger.error(f"DEBUG: Selected test_id: {test_id} from waiting tests")
+
+    # Also check Twilio's active_calls to find the test_id
+    if not test_id and call_sid in twilio_service.active_calls:
+        test_id = twilio_service.active_calls[call_sid].get("test_id")
+        logger.error(f"DEBUG: Found test_id: {test_id} in twilio_service.active_calls")
 
     # Check if there's an active test
     if test_id:

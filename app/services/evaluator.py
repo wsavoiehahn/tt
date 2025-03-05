@@ -91,6 +91,7 @@ class EvaluatorService:
                 )
         return None
 
+    # app/services/evaluator.py - Update the execute_test_case method
     async def execute_test_case(self, test_case: TestCase) -> TestCaseReport:
         """
         Execute a test case by initiating an outbound call to the target agent.
@@ -109,7 +110,12 @@ class EvaluatorService:
         test_id = str(test_case.id)
 
         # Log test_case details for debugging
-        logger.error(f"DEBUG: Test case details: {test_case.dict()}")
+        logger.error(
+            f"DEBUG: Test case details: {test_case.name}, persona: {test_case.config.persona_name}, behavior: {test_case.config.behavior_name}"
+        )
+        logger.error(
+            f"DEBUG: Test case questions: {[q.text if isinstance(q, dict) else q for q in test_case.config.questions]}"
+        )
 
         # Initialize test tracking BEFORE initiating the call
         self.active_tests[test_id] = {
@@ -121,10 +127,16 @@ class EvaluatorService:
         }
 
         # Log active tests after initialization
-        logger.error(f"DEBUG: Active tests after initialization: {self.active_tests}")
+        logger.error(
+            f"DEBUG: Active tests after initialization: {self.active_tests.keys()}"
+        )
+        logger.error(
+            f"DEBUG: Test {test_id} initialized with status: {self.active_tests[test_id]['status']}"
+        )
 
         # Save test case configuration
         s3_service.save_test_case(test_case.dict(), test_id)
+        logger.error(f"DEBUG: Test case saved to S3 for test {test_id}")
 
         # Get persona and behavior
         persona = self.get_persona(test_case.config.persona_name)
@@ -157,6 +169,12 @@ class EvaluatorService:
 
             logger.error(
                 f"DEBUG: Before initiating call for test {test_id}, status: {self.active_tests[test_id]['status']}"
+            )
+
+            # Explicitly set the status to waiting_for_call BEFORE initiating the call
+            self.active_tests[test_id]["status"] = "waiting_for_call"
+            logger.error(
+                f"DEBUG: Set test {test_id} status to waiting_for_call before call initiation"
             )
 
             # Initiate the outbound call
@@ -193,20 +211,23 @@ class EvaluatorService:
 
             call_sid = call_result["call_sid"]
 
-            # Verify and confirm test status
+            # Verify the test status is still "waiting_for_call"
             if self.active_tests[test_id]["status"] != "waiting_for_call":
                 logger.error(
-                    f"DEBUG: Test status not properly set to waiting_for_call! Current status: {self.active_tests[test_id]['status']}"
+                    f"DEBUG: Test status changed unexpectedly! Current status: {self.active_tests[test_id]['status']}"
                 )
                 # Force the status to be set correctly
                 self.active_tests[test_id]["status"] = "waiting_for_call"
-                logger.error(f"DEBUG: Forced test status to waiting_for_call")
+                logger.error(f"DEBUG: Forced test status back to waiting_for_call")
 
             self.active_tests[test_id]["call_sid"] = call_sid
 
-            # Log status again
+            # Log status again to confirm
             logger.error(
-                f"DEBUG: Test status after call initiated: {self.active_tests[test_id]}"
+                f"DEBUG: Test status after call initiated: {self.active_tests[test_id]['status']}"
+            )
+            logger.error(
+                f"DEBUG: Test {test_id} is waiting for call with call_sid: {call_sid}"
             )
 
             # Update test with call information
