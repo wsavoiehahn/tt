@@ -65,48 +65,95 @@ async def call_started(request: Request):
     # Dump all active tests to the logs for debugging
     logger.error(f"DEBUG: Active tests dump: {evaluator_service.active_tests}")
 
-    # Find active test if test_id is not provided
-    if not test_id:
-        logger.error(
-            "DEBUG: No test_id provided in call-started webhook, searching for waiting tests"
-        )
-        waiting_tests = [
-            (tid, data)
-            for tid, data in evaluator_service.active_tests.items()
-            if data.get("status") == "waiting_for_call"
-        ]
+    # Check if the test is already in memory
+    test_in_memory = test_id in evaluator_service.active_tests
+    logger.error(f"DEBUG: Test {test_id} found in memory: {test_in_memory}")
 
+    # If not in memory, check DynamoDB
+    if not test_in_memory and test_id:
+        logger.error(f"DEBUG: Test {test_id} not in memory, checking DynamoDB")
+        from ..services.dynamodb_service import dynamodb_service
+
+        test_data = dynamodb_service.get_test(test_id)
+
+        if test_data:
+            logger.error(f"DEBUG: Test {test_id} found in DynamoDB")
+            # Load the test into memory
+            evaluator_service.active_tests[test_id] = test_data
+            test_in_memory = True
+            logger.error(f"DEBUG: Loaded test {test_id} from DynamoDB into memory")
+            logger.error(f"DEBUG: Test data: {test_data}")
+        else:
+            logger.error(f"DEBUG: Test {test_id} not found in DynamoDB")
+
+    # If still not found, try to find a waiting test
+    if not test_id or not test_in_memory:
         logger.error(
-            f"DEBUG: Found {len(waiting_tests)} waiting tests: {[t[0] for t in waiting_tests]}"
+            "DEBUG: No test_id provided or test not found, searching for waiting tests in DynamoDB"
         )
+
+        from ..services.dynamodb_service import dynamodb_service
+
+        waiting_tests = dynamodb_service.get_waiting_tests()
+
+        logger.error(f"DEBUG: Found {len(waiting_tests)} waiting tests in DynamoDB")
 
         if waiting_tests:
-            test_id = waiting_tests[0][0]
-            logger.error(f"DEBUG: Selected test_id: {test_id} from waiting tests")
+            # Use the first waiting test
+            waiting_test = waiting_tests[0]
+            test_id = waiting_test["test_id"]
+            test_data = waiting_test["test_data"]
 
-    # Also check Twilio's active_calls to find the test_id
-    if not test_id and call_sid in twilio_service.active_calls:
-        test_id = twilio_service.active_calls[call_sid].get("test_id")
-        logger.error(f"DEBUG: Found test_id: {test_id} in twilio_service.active_calls")
+            # Load into memory
+            evaluator_service.active_tests[test_id] = test_data
+            test_in_memory = True
 
-    # Check if there's an active test
-    if test_id:
+            logger.error(
+                f"DEBUG: Selected test_id: {test_id} from waiting tests in DynamoDB"
+            )
+            logger.error(f"DEBUG: Loaded waiting test into memory: {test_id}")
+
+    # Also check Twilio's active_calls to find the test_id as last resort
+    if not test_id or not test_in_memory:
+        if call_sid in twilio_service.active_calls:
+            test_id = twilio_service.active_calls[call_sid].get("test_id")
+            logger.error(
+                f"DEBUG: Found test_id: {test_id} in twilio_service.active_calls"
+            )
+
+            # Try to load from DynamoDB again
+            if test_id:
+                from ..services.dynamodb_service import dynamodb_service
+
+                test_data = dynamodb_service.get_test(test_id)
+
+                if test_data:
+                    evaluator_service.active_tests[test_id] = test_data
+                    test_in_memory = True
+                    logger.error(
+                        f"DEBUG: Loaded test {test_id} from DynamoDB via Twilio active_calls"
+                    )
+
+    # Check if there's an active test now
+    if test_id and test_id in evaluator_service.active_tests:
         logger.error(f"DEBUG: Using test_id: {test_id} for call {call_sid}")
 
         # Update test status
-        if test_id in evaluator_service.active_tests:
-            previous_status = evaluator_service.active_tests[test_id].get(
-                "status", "unknown"
-            )
-            evaluator_service.active_tests[test_id]["status"] = "in_progress"
-            evaluator_service.active_tests[test_id]["call_sid"] = call_sid
-            logger.error(
-                f"DEBUG: Updated test {test_id} status from {previous_status} to in_progress"
-            )
-        else:
-            logger.error(
-                f"DEBUG: Test {test_id} exists in query param but not in active_tests dictionary"
-            )
+        previous_status = evaluator_service.active_tests[test_id].get(
+            "status", "unknown"
+        )
+        evaluator_service.active_tests[test_id]["status"] = "in_progress"
+        evaluator_service.active_tests[test_id]["call_sid"] = call_sid
+        logger.error(
+            f"DEBUG: Updated test {test_id} status from {previous_status} to in_progress"
+        )
+
+        # Update status in DynamoDB
+        from ..services.dynamodb_service import dynamodb_service
+
+        dynamodb_service.update_test_status(test_id, "in_progress")
+        dynamodb_service.save_test(test_id, evaluator_service.active_tests[test_id])
+        logger.error(f"DEBUG: Updated test status in DynamoDB to in_progress")
 
         # Get the callback URL from config for logging
         callback_url = config.get_parameter("/ai-evaluator/twilio_callback_url")
@@ -546,6 +593,23 @@ async def media_stream(websocket: WebSocket):
     test_id = query_params.get("test_id")
     call_sid = query_params.get("call_sid")
 
+    test_in_memory = test_id in evaluator_service.active_tests
+
+    # If not in memory, try to load from DynamoDB
+    if not test_in_memory:
+        logger.error(f"DEBUG: Test {test_id} not found in memory, trying DynamoDB")
+        from ..services.dynamodb_service import dynamodb_service
+
+        test_data = dynamodb_service.get_test(test_id)
+
+        if test_data:
+            logger.error(
+                f"DEBUG: Test {test_id} found in DynamoDB, loading into memory"
+            )
+            evaluator_service.active_tests[test_id] = test_data
+            test_in_memory = True
+        else:
+            logger.error(f"DEBUG: Test {test_id} not found in DynamoDB")
     logger.error(f"DEBUG: WebSocket params - test_id: {test_id}, call_sid: {call_sid}")
 
     if not test_id or not call_sid:

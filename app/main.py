@@ -96,6 +96,12 @@ async def startup_event():
         storage_service.ensure_bucket_exists()
         logger.info(f"Storage initialized")
 
+        # Initialize DynamoDB table
+        from .services.dynamodb_service import dynamodb_service
+
+        dynamodb_service.ensure_table_exists()
+        logger.info("DynamoDB table initialized")
+
         # Log application startup
         logger.info("AI Call Center Evaluator application started successfully")
     except Exception as e:

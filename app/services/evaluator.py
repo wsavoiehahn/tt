@@ -117,7 +117,7 @@ class EvaluatorService:
             f"DEBUG: Test case questions: {[q.text if isinstance(q, dict) else q for q in test_case.config.questions]}"
         )
 
-        # Initialize test tracking BEFORE initiating the call
+        # Initialize test tracking in memory
         self.active_tests[test_id] = {
             "test_case": test_case.dict(),
             "status": "starting",
@@ -125,6 +125,12 @@ class EvaluatorService:
             "current_question_index": 0,
             "questions_evaluated": [],
         }
+
+        # Also save to DynamoDB for persistence across Lambda executions
+        from ..services.dynamodb_service import dynamodb_service
+
+        dynamodb_service.save_test(test_id, self.active_tests[test_id])
+        logger.error(f"DEBUG: Test {test_id} saved to DynamoDB")
 
         # Log active tests after initialization
         logger.error(
@@ -177,6 +183,13 @@ class EvaluatorService:
                 f"DEBUG: Set test {test_id} status to waiting_for_call before call initiation"
             )
 
+            # Update in DynamoDB
+            dynamodb_service.update_test_status(test_id, "waiting_for_call")
+            logger.error(f"DEBUG: Updated test status in DynamoDB to waiting_for_call")
+
+            # Save the full test data again to DynamoDB
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+
             # Initiate the outbound call
             call_result = twilio_service.initiate_call(test_id)
 
@@ -187,6 +200,10 @@ class EvaluatorService:
                 # Mark test as failed
                 self.active_tests[test_id]["status"] = "failed"
                 self.active_tests[test_id]["error"] = call_result["error"]
+
+                # Update in DynamoDB
+                dynamodb_service.update_test_status(test_id, "failed")
+                dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
                 logger.error(
                     f"DEBUG: Test status after error: {self.active_tests[test_id]['status']}"
@@ -220,7 +237,14 @@ class EvaluatorService:
                 self.active_tests[test_id]["status"] = "waiting_for_call"
                 logger.error(f"DEBUG: Forced test status back to waiting_for_call")
 
+                # Update in DynamoDB
+                dynamodb_service.update_test_status(test_id, "waiting_for_call")
+
             self.active_tests[test_id]["call_sid"] = call_sid
+
+            # Update in DynamoDB with call_sid
+            self.active_tests[test_id]["call_sid"] = call_sid
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
             # Log status again to confirm
             logger.error(
@@ -237,6 +261,9 @@ class EvaluatorService:
                 "status": "initiated",
                 "start_time": time.time(),
             }
+
+            # Update in DynamoDB again
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
             logger.error(f"DEBUG: Call initiated: {call_sid} for test {test_id}")
 
@@ -262,6 +289,10 @@ class EvaluatorService:
             report_id = str(report.id)
             s3_service.save_report(report.dict(), report_id)
 
+            # Store report_id in test data and update DynamoDB
+            self.active_tests[test_id]["report_id"] = report_id
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+
             logger.error(f"DEBUG: Initial report created: {report_id}")
 
             return report
@@ -275,6 +306,12 @@ class EvaluatorService:
             # Mark test as failed
             self.active_tests[test_id]["status"] = "failed"
             self.active_tests[test_id]["error"] = str(e)
+
+            # Update in DynamoDB
+            from ..services.dynamodb_service import dynamodb_service
+
+            dynamodb_service.update_test_status(test_id, "failed")
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
             return TestCaseReport(
                 test_case_id=test_case.id,
@@ -304,16 +341,37 @@ class EvaluatorService:
             call_sid: Call SID
             conversation: List of conversation turns
         """
-        logger.info(f"Processing call for test {test_id}, call {call_sid}")
+        logger.error(f"DEBUG: Processing call for test {test_id}, call {call_sid}")
 
         if test_id not in self.active_tests:
-            logger.error(f"Test {test_id} not found in active tests")
-            return
+            logger.error(
+                f"DEBUG: Test {test_id} not found in active tests, checking DynamoDB"
+            )
+            from .dynamodb_service import dynamodb_service
+
+            test_data = dynamodb_service.get_test(test_id)
+
+            if test_data:
+                logger.error(
+                    f"DEBUG: Test {test_id} found in DynamoDB, loading into memory"
+                )
+                self.active_tests[test_id] = test_data
+            else:
+                logger.error(
+                    f"DEBUG: Test {test_id} not found in active tests or DynamoDB"
+                )
+                return
 
         # Update test status
         self.active_tests[test_id]["status"] = "processing"
         self.active_tests[test_id]["call_sid"] = call_sid
         self.active_tests[test_id]["end_time"] = time.time()
+
+        # Update in DynamoDB
+        from .dynamodb_service import dynamodb_service
+
+        dynamodb_service.update_test_status(test_id, "processing")
+        dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
         # Generate report
         await self.generate_report_from_conversation(test_id, conversation)
