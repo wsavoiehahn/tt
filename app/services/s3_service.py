@@ -146,7 +146,7 @@ class S3Service:
 
     def save_report(self, report_data: Dict[str, Any], report_id: str) -> str:
         """
-        Save a test report to S3.
+        Save a test report to S3 with consistent path structure.
 
         Args:
             report_data: Report data as dictionary
@@ -155,16 +155,21 @@ class S3Service:
         Returns:
             S3 URL for the saved report
         """
+        # Always use current date for folder structure
         timestamp = datetime.now().strftime("%Y%m%d")
         key = f"reports/{timestamp}/{report_id}.json"
 
         try:
+            # Save to S3
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
                 Key=key,
                 Body=json.dumps(report_data, default=str).encode("utf-8"),
                 ContentType="application/json",
             )
+
+            # Log the exact path for debugging
+            logger.info(f"Saved report {report_id} to S3 path: {key}")
 
             return f"s3://{self.bucket_name}/{key}"
         except ClientError as e:
@@ -244,38 +249,81 @@ class S3Service:
         return {}
 
     def list_reports(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        List available reports with improved folder structure support.
+
+        Args:
+            limit: Maximum number of reports to list
+
+        Returns:
+            List of report metadata
+        """
         try:
+            # Use a more general prefix to include date folders
+            reports = []
+
+            # First list all date folders
+            date_folders = set()
             response = self.s3_client.list_objects_v2(
-                Bucket=self.bucket_name, Prefix="reports/", MaxKeys=limit
+                Bucket=self.bucket_name, Prefix="reports/", Delimiter="/"
             )
 
-            reports = []
-            for obj in response.get("Contents", []):
-                if obj["Key"].endswith(".json"):
-                    try:
-                        # Verify the object can be retrieved
-                        report_data = self.get_json(obj["Key"])
+            # Add the base reports folder
+            date_folders.add("reports/")
 
-                        # Only add if we can successfully retrieve the report
-                        if report_data:
-                            reports.append(
-                                {
-                                    "report_id": obj["Key"]
-                                    .split("/")[-1]
-                                    .replace(".json", ""),
-                                    "date": obj["LastModified"],
-                                    "size": obj["Size"],
-                                    "s3_key": obj["Key"],
-                                    "s3_url": f"s3://{self.bucket_name}/{obj['Key']}",
-                                    "data": report_data,  # Include the full report data
-                                }
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"Skipping report due to error: {obj['Key']} - {str(e)}"
-                        )
+            # Add all date subfolders
+            for prefix in response.get("CommonPrefixes", []):
+                date_folders.add(prefix.get("Prefix"))
 
-            return reports
+            # For each date folder, list report files
+            for folder in date_folders:
+                try:
+                    folder_response = self.s3_client.list_objects_v2(
+                        Bucket=self.bucket_name,
+                        Prefix=folder,
+                        MaxKeys=limit - len(reports),  # Respect the overall limit
+                    )
+
+                    for obj in folder_response.get("Contents", []):
+                        if obj["Key"].endswith(".json"):
+                            try:
+                                # Extract report ID from filename
+                                filename = obj["Key"].split("/")[-1]
+                                report_id = filename.replace(".json", "")
+
+                                # Verify the object can be retrieved
+                                report_data = self.get_json(obj["Key"])
+
+                                # Only add if we can successfully retrieve the report
+                                if report_data:
+                                    reports.append(
+                                        {
+                                            "report_id": report_id,
+                                            "date": obj["LastModified"],
+                                            "size": obj["Size"],
+                                            "s3_key": obj["Key"],
+                                            "s3_url": f"s3://{self.bucket_name}/{obj['Key']}",
+                                            "data": report_data,  # Include the full report data
+                                        }
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Skipping report due to error: {obj['Key']} - {str(e)}"
+                                )
+
+                    # Stop if we've reached the limit
+                    if len(reports) >= limit:
+                        break
+                except Exception as folder_error:
+                    logger.warning(
+                        f"Error listing reports in folder {folder}: {str(folder_error)}"
+                    )
+                    continue
+
+            # Sort by date (most recent first)
+            reports.sort(key=lambda x: x.get("date"), reverse=True)
+
+            return reports[:limit]
         except ClientError as e:
             logger.error(f"Error listing reports: {str(e)}")
             return []

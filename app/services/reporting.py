@@ -2,7 +2,7 @@
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import uuid
 
@@ -87,7 +87,7 @@ class ReportingService:
 
     def get_report(self, report_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get a report by ID.
+        Get a report by ID with improved path handling.
 
         Args:
             report_id: Report ID
@@ -98,37 +98,53 @@ class ReportingService:
         # Check cache first
         if report_id in self.cached_reports:
             try:
-                # Attempt to verify the report still exists
-                s3_key = f"reports/{report_id}.json"
-                s3_service.get_object(s3_key)
+                # Verify the report still exists in S3 (lightweight check)
+                s3_service.s3_client.head_object(
+                    Bucket=s3_service.bucket_name,
+                    Key=f"reports/{datetime.now().strftime('%Y%m%d')}/{report_id}.json",
+                )
                 return self.cached_reports[report_id]
             except Exception:
-                # If report doesn't exist, remove from cache
-                del self.cached_reports[report_id]
+                # If report doesn't exist in today's folder, continue with full search
+                # But don't remove from cache yet - it might be in a different date folder
+                pass
 
-        # Try to load from S3
+        # Try to load from S3 with different possible paths
         report_data = None
 
-        # Try different possible locations
+        # First try current date folder (most likely location)
+        current_date = datetime.now().strftime("%Y%m%d")
         possible_paths = [
-            f"reports/{report_id}.json",
-            f"reports/{datetime.now().strftime('%Y%m%d')}/{report_id}.json",
+            f"reports/{current_date}/{report_id}.json",  # Main format with date folder
+            f"reports/{report_id}.json",  # Legacy/fallback with no date folder
         ]
 
+        # If report not found, try looking in date folders from the past week
+        if not report_data:
+            # Add date folders from the past 7 days
+            for i in range(1, 8):
+                past_date = (datetime.now() - timedelta(days=i)).strftime("%Y%m%d")
+                possible_paths.append(f"reports/{past_date}/{report_id}.json")
+
+        # Try all possible paths
         for path in possible_paths:
             try:
                 data = s3_service.get_json(path)
                 if data:
+                    logger.info(f"Found report at path: {path}")
                     report_data = data
-                    break
+                    # Cache the report
+                    self.cached_reports[report_id] = report_data
+                    return report_data
             except Exception as e:
-                # Log the specific error, but continue trying other paths
-                logger.warning(f"Error checking path {path}: {str(e)}")
+                # Just continue to the next path
+                pass
 
-        if report_data:
-            # Cache the report
-            self.cached_reports[report_id] = report_data
-            return report_data
+        # Special case: If the report is in cache but not found in S3, still return it
+        # This is useful for recently generated reports that might not be synced to S3 yet
+        if report_id in self.cached_reports:
+            logger.warning(f"Report {report_id} not found in S3, using cached version")
+            return self.cached_reports[report_id]
 
         # If no report found, log a warning and return None
         logger.warning(f"Report {report_id} not found in any location")
