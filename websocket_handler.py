@@ -1,168 +1,223 @@
-# websocket_handler.py
+# websocket_handler.py with enhanced debugging
 import json
 import logging
 import base64
 import asyncio
 import boto3
 import os
+import traceback
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+
+# Global variables for services
+openai_service = None
+evaluator_service = None
+realtime_service = None
+dynamodb_service = None
+s3_service = None
 
 # Global dictionary to store active WebSocket connections
 active_connections = {}
 
-# DynamoDB client for test storage
-dynamodb = boto3.resource("dynamodb")
-test_table = dynamodb.Table("ai-call-center-evaluator-dev-tests")
 
-# Import services when used in Lambda context
-try:
-    from app.services.openai_service import openai_service
-    from app.services.evaluator import evaluator_service
-    from app.services.s3_service import s3_service
-    from app.services.dynamodb_service import dynamodb_service
-    from app.services.realtime_service import realtime_service
-except ImportError:
-    logger.warning(
-        "Could not import app services - will attempt to import when handling requests"
-    )
-    realtime_service = None
+def import_services():
+    """
+    Dynamically import services with comprehensive error handling.
+    """
+    global openai_service, evaluator_service, realtime_service, dynamodb_service, s3_service
+    try:
+        from app.services.openai_service import openai_service
+        from app.services.evaluator import evaluator_service
+        from app.services.realtime_service import realtime_service
+        from app.services.dynamodb_service import dynamodb_service
+        from app.services.s3_service import s3_service
+
+        logger.error("Services imported successfully")
+    except ImportError as e:
+        logger.error(f"CRITICAL: Failed to import services: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
 
 
 def lambda_handler(event, context):
     """
-    WebSocket handler for Twilio Media Streams.
-    This function processes WebSocket events for real-time audio streaming
-    between Twilio and OpenAI.
+    Enhanced WebSocket handler with comprehensive error logging.
     """
-    logger.info(f"WebSocket event received: {json.dumps(event)}")
+    try:
+        # Import services with detailed logging
+        import_services()
+    except Exception as e:
+        logger.error(f"CRITICAL: Service import failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"statusCode": 500, "body": "Service import catastrophically failed"}
 
-    # Get connection info
+    logger.error(f"Received WebSocket event: {json.dumps(event)}")
+
+    # Extract connection details
     connection_id = event.get("requestContext", {}).get("connectionId")
     route_key = event.get("requestContext", {}).get("routeKey")
     domain_name = event.get("requestContext", {}).get("domainName")
     stage = event.get("requestContext", {}).get("stage")
 
-    # Create API Gateway Management client for sending responses back
-    api_gateway_management = boto3.client(
-        "apigatewaymanagementapi", endpoint_url=f"https://{domain_name}/{stage}"
-    )
+    logger.error(f"Connection details - ID: {connection_id}, Route: {route_key}")
 
-    logger.info(f"Connection ID: {connection_id}, Route: {route_key}")
+    # Create API Gateway Management client
+    try:
+        api_gateway_management = boto3.client(
+            "apigatewaymanagementapi", endpoint_url=f"https://{domain_name}/{stage}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to create API Gateway client: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"statusCode": 500, "body": "API Gateway client creation failed"}
 
-    # Handle different WebSocket routes
-    if route_key == "$connect":
-        return handle_connect(event, connection_id)
-    elif route_key == "$disconnect":
-        return handle_disconnect(event, connection_id)
-    elif route_key == "$default":
-        return handle_default_message(event, connection_id, api_gateway_management)
-    else:
-        return {"statusCode": 400, "body": "Unknown route"}
+    # Handle different routes with enhanced error handling
+    try:
+        if route_key == "$connect":
+            return handle_connect(event, connection_id)
+        elif route_key == "$disconnect":
+            return handle_disconnect(event, connection_id)
+        elif route_key == "$default":
+            return handle_default_message(event, connection_id, api_gateway_management)
+        else:
+            logger.warning(f"Unknown route: {route_key}")
+            return {"statusCode": 400, "body": "Unknown route"}
+    except Exception as e:
+        logger.error(f"UNHANDLED WebSocket event error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"statusCode": 500, "body": f"Unhandled error: {str(e)}"}
 
 
 def handle_connect(event, connection_id):
-    """Handle new WebSocket connection."""
+    """
+    Enhanced connection handling with comprehensive logging.
+    """
+    logger.error(f"Handling WebSocket connect for connection {connection_id}")
+
     try:
         # Extract query parameters
         query_params = event.get("queryStringParameters", {}) or {}
         test_id = query_params.get("test_id")
         call_sid = query_params.get("call_sid")
 
-        logger.info(f"WebSocket connect with test_id: {test_id}, call_sid: {call_sid}")
+        logger.info(f"Connect params - test_id: {test_id}, call_sid: {call_sid}")
 
-        # Store connection information
-        active_connections[connection_id] = {
+        # Validate connection parameters
+        if not test_id or not call_sid:
+            logger.error("Missing test_id or call_sid in connection")
+            return {
+                "statusCode": 400,
+                "body": "Invalid connection parameters: test_id and call_sid are required",
+            }
+
+        # Store connection information with enhanced tracking
+        connection_data = {
             "connection_id": connection_id,
             "test_id": test_id,
             "call_sid": call_sid,
             "connected_at": datetime.now().isoformat(),
             "status": "connected",
-            "openai_stream": None,
+            "audio_buffer": [],
+            "connection_attempts": 1,
+            "last_activity": datetime.now().isoformat(),
         }
+        active_connections[connection_id] = connection_data
 
-        # Try to load test data from DynamoDB
-        if test_id:
-            try:
-                # Initialize services if needed
-                global dynamodb_service, evaluator_service, realtime_service
-                if dynamodb_service is None:
-                    from app.services.dynamodb_service import dynamodb_service
-                if evaluator_service is None:
-                    from app.services.evaluator import evaluator_service
-                if realtime_service is None:
-                    from app.services.realtime_service import realtime_service
+        # Load test data with detailed error handling
+        try:
+            # Attempt to load from active tests first
+            test_data = None
+            if (
+                hasattr(evaluator_service, "active_tests")
+                and test_id in evaluator_service.active_tests
+            ):
+                test_data = evaluator_service.active_tests[test_id]
+                logger.error(f"Loaded test data from active tests for {test_id}")
 
-                # Try to get test from memory first
-                test_data = None
-                if (
-                    hasattr(evaluator_service, "active_tests")
-                    and test_id in evaluator_service.active_tests
-                ):
-                    test_data = evaluator_service.active_tests[test_id]
+            # Fallback to DynamoDB
+            if not test_data:
+                test_data = dynamodb_service.get_test(test_id)
+                logger.error(f"Loaded test data from DynamoDB for {test_id}")
 
-                # If not in memory, try DynamoDB
-                if not test_data:
-                    test_data = dynamodb_service.get_test(test_id)
-                    # If found, add to active tests in memory
-                    if test_data and hasattr(evaluator_service, "active_tests"):
-                        evaluator_service.active_tests[test_id] = test_data
+                # Update active tests if found
+                if test_data and hasattr(evaluator_service, "active_tests"):
+                    evaluator_service.active_tests[test_id] = test_data
 
-                # Store test data in connection
-                if test_data:
-                    active_connections[connection_id]["test_data"] = test_data
-                else:
-                    logger.warning(f"No test data found for test_id: {test_id}")
-            except Exception as e:
-                logger.error(f"Error loading test data: {str(e)}")
-                import traceback
+            # Update connection with test data
+            if test_data:
+                connection_data["test_data"] = test_data
+                logger.info(f"Successfully loaded test data for {test_id}")
+            else:
+                logger.warning(f"No test data found for test_id: {test_id}")
 
-                logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception as e:
+            logger.error(f"Error loading test data: {str(e)}")
+            logger.error(traceback.format_exc())
 
-        return {"statusCode": 200, "body": "Connected"}
+        return {"statusCode": 200, "body": "Connected successfully"}
+
     except Exception as e:
-        logger.error(f"Error handling connect: {str(e)}")
-        return {"statusCode": 500, "body": f"Error: {str(e)}"}
+        logger.error(f"Comprehensive error in connection handling: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"statusCode": 500, "body": f"Connection error: {str(e)}"}
 
 
 def handle_disconnect(event, connection_id):
-    """Handle WebSocket disconnection."""
+    """
+    Handle WebSocket disconnection.
+    Clean up connection resources.
+    """
     try:
         logger.info(f"WebSocket disconnected: {connection_id}")
 
-        # Get connection data
-        connection_data = active_connections.get(connection_id)
-        if connection_data:
-            # Clean up OpenAI stream if exists
-            openai_stream = connection_data.get("openai_stream")
-            if openai_stream:
-                asyncio.run(close_openai_stream(openai_stream))
+        # Remove from active connections
+        connection_data = active_connections.pop(connection_id, None)
 
-            # Remove from active connections
-            active_connections.pop(connection_id, None)
+        if connection_data:
+            test_id = connection_data.get("test_id")
+            call_sid = connection_data.get("call_sid")
+
+            # Clean up any ongoing test or call
+            if test_id:
+                try:
+                    # Mark test as completed or failed
+                    if test_id in evaluator_service.active_tests:
+                        evaluator_service.active_tests[test_id][
+                            "status"
+                        ] = "disconnected"
+
+                    # Update in DynamoDB
+                    dynamodb_service.update_test_status(test_id, "disconnected")
+                except Exception as e:
+                    logger.error(f"Error updating test status: {str(e)}")
+
+            # End the call if still active
+            if call_sid:
+                try:
+                    from app.services.twilio_service import twilio_service
+
+                    twilio_service.end_call(call_sid)
+                except Exception as e:
+                    logger.error(f"Error ending call: {str(e)}")
 
         return {"statusCode": 200, "body": "Disconnected"}
-    except Exception as e:
-        logger.error(f"Error handling disconnect: {str(e)}")
-        return {"statusCode": 500, "body": f"Error: {str(e)}"}
 
-
-async def close_openai_stream(openai_stream):
-    """Close OpenAI stream connection."""
-    try:
-        if hasattr(openai_stream, "close") and callable(openai_stream.close):
-            await openai_stream.close()
     except Exception as e:
-        logger.error(f"Error closing OpenAI stream: {str(e)}")
+        logger.error(f"Error in handle_disconnect: {str(e)}")
+        return {"statusCode": 500, "body": f"Disconnection error: {str(e)}"}
 
 
 def handle_default_message(event, connection_id, api_gateway_management):
-    """Handle incoming messages on the WebSocket."""
+    """
+    Handle incoming messages on the WebSocket.
+    Process audio streams and media events.
+    """
     try:
         # Get connection data
         connection_data = active_connections.get(connection_id)
@@ -170,350 +225,232 @@ def handle_default_message(event, connection_id, api_gateway_management):
             logger.error(f"No connection data found for {connection_id}")
             return {"statusCode": 400, "body": "Connection not found"}
 
-        # Get message data
+        # Get message body
         body = event.get("body")
         if not body:
             return {"statusCode": 400, "body": "Empty message"}
 
-        # Parse message
         try:
+            # Try parsing as JSON first
             message_data = json.loads(body)
             event_type = message_data.get("event")
 
+            logger.info(f"Processing message event: {event_type}")
+
             # Process based on event type
-            if event_type == "start":
+            if event_type == "media":
+                # Handle media payload (audio)
+                handle_media_event(message_data, connection_data)
+            elif event_type == "start":
+                # Stream start event
                 handle_stream_start(message_data, connection_data)
-            elif event_type == "media":
-                handle_media_data(message_data, connection_data, api_gateway_management)
             elif event_type == "stop":
+                # Stream stop event
                 handle_stream_stop(message_data, connection_data)
-            elif event_type == "mark":
-                handle_mark_event(message_data, connection_data)
-            else:
-                logger.warning(f"Unknown event type: {event_type}")
+
         except json.JSONDecodeError:
-            # Handle binary data (likely PCM audio)
-            handle_binary_data(body, connection_data, api_gateway_management)
+            # If not JSON, treat as raw audio data
+            handle_raw_audio(body, connection_data)
 
         return {"statusCode": 200, "body": "Processed"}
-    except Exception as e:
-        logger.error(f"Error handling message: {str(e)}")
-        import traceback
 
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return {"statusCode": 500, "body": f"Error: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error in handle_default_message: {str(e)}")
+        return {"statusCode": 500, "body": f"Message processing error: {str(e)}"}
+
+
+def handle_media_event(message_data, connection_data):
+    """
+    Process media events (audio payloads) from Twilio.
+    """
+    try:
+        payload = message_data.get("media", {}).get("payload")
+        if not payload:
+            return
+
+        # Add to audio buffer
+        connection_data.setdefault("audio_buffer", []).append(payload)
+
+        # Process buffer when it reaches a certain size
+        if len(connection_data["audio_buffer"]) >= 5:
+            process_audio_buffer(connection_data)
+
+    except Exception as e:
+        logger.error(f"Error processing media event: {str(e)}")
+
+
+def process_audio_buffer(connection_data):
+    """
+    Process accumulated audio buffer.
+    Send to OpenAI real-time service.
+    """
+    try:
+        # Concatenate audio buffer
+        audio_buffer = connection_data.get("audio_buffer", [])
+        if not audio_buffer:
+            return
+
+        concatenated_payload = "".join(audio_buffer)
+        connection_data["audio_buffer"] = []  # Clear buffer
+
+        # Send to real-time service
+        call_sid = connection_data.get("call_sid")
+        if call_sid:
+            # Use async task to send audio
+            asyncio.create_task(
+                realtime_service.process_audio_chunk(call_sid, concatenated_payload)
+            )
+
+    except Exception as e:
+        logger.error(f"Error in process_audio_buffer: {str(e)}")
 
 
 def handle_stream_start(message_data, connection_data):
-    """Handle stream start event from Twilio."""
-    logger.info(f"Stream start: {message_data}")
-
-    # Extract stream SID
-    stream_sid = message_data.get("start", {}).get("streamSid")
-    if stream_sid:
-        connection_data["stream_sid"] = stream_sid
-        connection_data["status"] = "streaming"
-
-        # Initialize OpenAI connection
-        try:
-            global realtime_service
-            if realtime_service is None:
-                from app.services.realtime_service import realtime_service
-
-            # Start OpenAI session if test data is available
-            test_data = connection_data.get("test_data")
-            if test_data:
-                test_id = connection_data.get("test_id")
-                call_sid = connection_data.get("call_sid")
-
-                # Extract test info
-                test_case = test_data.get("test_case", {})
-                persona_name = test_case.get("config", {}).get("persona_name")
-                behavior_name = test_case.get("config", {}).get("behavior_name")
-
-                # Initialize OpenAI connection in the background
-                import threading
-
-                threading.Thread(
-                    target=asyncio.run,
-                    args=(
-                        initialize_openai_session(
-                            connection_data,
-                            test_id,
-                            call_sid,
-                            persona_name,
-                            behavior_name,
-                        ),
-                    ),
-                ).start()
-        except Exception as e:
-            logger.error(f"Error initializing OpenAI session: {str(e)}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
-
-
-def handle_media_data(message_data, connection_data, api_gateway_management):
-    """Handle media data from Twilio."""
-    # Extract and process audio
-    media_data = message_data.get("media", {})
-    payload = media_data.get("payload")
-
-    if payload:
-        # Store in connection data buffer
-        if "audio_buffer" not in connection_data:
-            connection_data["audio_buffer"] = []
-
-        connection_data["audio_buffer"].append(payload)
-
-        # Process buffer if it reaches threshold
-        if len(connection_data["audio_buffer"]) >= 5:
-            # Send to OpenAI in the background
-            process_audio_buffer(connection_data, api_gateway_management)
-
-            # Clear buffer
-            connection_data["audio_buffer"] = []
-
-
-def process_audio_buffer(connection_data, api_gateway_management):
-    """Process audio buffer and send to OpenAI."""
-    # Get OpenAI session
-    openai_session = connection_data.get("openai_session")
-    if not openai_session:
-        logger.warning("No OpenAI session available")
-        return
-
-    # Concatenate audio data
-    audio_buffer = connection_data.get("audio_buffer", [])
-    if not audio_buffer:
-        return
-
-    # Concatenate payloads
-    concatenated_payload = "".join(audio_buffer)
-
-    # Send to OpenAI in the background
-    import threading
-
-    threading.Thread(
-        target=asyncio.run,
-        args=(
-            send_audio_to_openai(
-                concatenated_payload, connection_data, api_gateway_management
-            ),
-        ),
-    ).start()
-
-
-async def send_audio_to_openai(audio_payload, connection_data, api_gateway_management):
-    """Send audio to OpenAI and process the response."""
+    """
+    Process stream start event from Twilio.
+    Initialize OpenAI session.
+    """
     try:
-        global realtime_service
-        if realtime_service is None:
-            from app.services.realtime_service import realtime_service
+        stream_sid = message_data.get("start", {}).get("streamSid")
+        logger.info(f"Stream started: {stream_sid}")
 
-        # Get connection details
-        connection_id = connection_data.get("connection_id")
-        stream_sid = connection_data.get("stream_sid")
+        # Extract test and call details
+        test_id = connection_data.get("test_id")
+        call_sid = connection_data.get("call_sid")
+        test_data = connection_data.get("test_data", {})
 
-        # Send audio to OpenAI
-        await realtime_service.process_audio_chunk(
-            connection_data.get("call_sid"), audio_payload
-        )
+        # Ensure required details exist
+        if not test_id or not call_sid:
+            logger.error("Missing test_id or call_sid")
+            return
 
-        # Check if there's a response from OpenAI
-        openai_session = connection_data.get("openai_session")
-        if openai_session and openai_session.get("last_response_audio"):
-            # Get audio response
-            audio_response = openai_session.pop("last_response_audio")
+        # Initialize OpenAI session
+        asyncio.create_task(initialize_openai_session(call_sid, test_id, test_data))
 
-            # Send back to Twilio
-            try:
-                media_message = {
-                    "event": "media",
-                    "streamSid": stream_sid,
-                    "media": {
-                        "payload": base64.b64encode(audio_response).decode("utf-8")
-                    },
-                }
-                api_gateway_management.post_to_connection(
-                    ConnectionId=connection_id, Data=json.dumps(media_message)
-                )
-            except Exception as e:
-                logger.error(f"Error sending media response: {str(e)}")
     except Exception as e:
-        logger.error(f"Error sending audio to OpenAI: {str(e)}")
-        import traceback
-
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Error in stream start: {str(e)}")
 
 
 def handle_stream_stop(message_data, connection_data):
-    """Handle stream stop event from Twilio."""
-    logger.info(f"Stream stop: {message_data}")
-
-    # Update connection status
-    connection_data["status"] = "stopped"
-
-    # Cleanup OpenAI connection
-    openai_stream = connection_data.get("openai_stream")
-    if openai_stream:
-        asyncio.run(close_openai_stream(openai_stream))
-
-    # Process test completion
-    test_id = connection_data.get("test_id")
-    call_sid = connection_data.get("call_sid")
-
-    if test_id and call_sid:
-        try:
-            global evaluator_service
-            if evaluator_service is None:
-                from app.services.evaluator import evaluator_service
-
-            # Process completed call
-            asyncio.run(
-                evaluator_service.process_completed_call(test_id, call_sid, "completed")
-            )
-        except Exception as e:
-            logger.error(f"Error processing completed call: {str(e)}")
-
-
-def handle_mark_event(message_data, connection_data):
-    """Handle mark event from Twilio."""
-    logger.info(f"Mark event: {message_data}")
-
-    # Extract mark name
-    mark_name = message_data.get("mark", {}).get("name")
-    if mark_name:
-        # Process specific marks
-        if mark_name == "question_complete":
-            # Advance to next question
-            test_id = connection_data.get("test_id")
-            if test_id:
-                try:
-                    global evaluator_service
-                    if evaluator_service is None:
-                        from app.services.evaluator import evaluator_service
-
-                    # Increment current question index
-                    if test_id in evaluator_service.active_tests:
-                        current_index = evaluator_service.active_tests[test_id].get(
-                            "current_question_index", 0
-                        )
-                        evaluator_service.active_tests[test_id][
-                            "current_question_index"
-                        ] = (current_index + 1)
-                except Exception as e:
-                    logger.error(f"Error advancing question: {str(e)}")
-
-
-def handle_binary_data(data, connection_data, api_gateway_management):
-    """Handle binary data (likely raw audio)."""
-    logger.info("Received binary data")
-    # For binary data, process similarly to media data
-    if data:
-        # Store in connection data buffer
-        if "audio_buffer" not in connection_data:
-            connection_data["audio_buffer"] = []
-
-        connection_data["audio_buffer"].append(data)
-
-        # Process buffer if it reaches threshold
-        if len(connection_data["audio_buffer"]) >= 5:
-            # Send to OpenAI in the background
-            process_audio_buffer(connection_data, api_gateway_management)
-
-            # Clear buffer
-            connection_data["audio_buffer"] = []
-
-
-async def initialize_openai_session(
-    connection_data, test_id, call_sid, persona_name, behavior_name
-):
     """
-    Initialize an OpenAI session for real-time conversation.
+    Process stream stop event.
+    Clean up and finalize the test.
     """
     try:
-        global realtime_service, evaluator_service
-        if realtime_service is None:
-            from app.services.realtime_service import realtime_service
-        if evaluator_service is None:
-            from app.services.evaluator import evaluator_service
+        test_id = connection_data.get("test_id")
+        call_sid = connection_data.get("call_sid")
 
-        # Get knowledge base
-        knowledge_base = evaluator_service.knowledge_base or {}
+        logger.info(f"Stream stopped for test {test_id}, call {call_sid}")
+
+        # End the OpenAI session
+        asyncio.create_task(realtime_service.end_session(call_sid))
+
+        # Process test completion
+        if test_id:
+            asyncio.create_task(finalize_test_completion(test_id, call_sid))
+
+    except Exception as e:
+        logger.error(f"Error in stream stop: {str(e)}")
+
+
+def handle_raw_audio(audio_data, connection_data):
+    """
+    Process raw audio data received from Twilio.
+    """
+    try:
+        # Add to audio buffer
+        connection_data.setdefault("audio_buffer", []).append(audio_data)
+
+        # Process buffer when it reaches a certain size
+        if len(connection_data["audio_buffer"]) >= 5:
+            process_audio_buffer(connection_data)
+
+    except Exception as e:
+        logger.error(f"Error processing raw audio: {str(e)}")
+
+
+async def initialize_openai_session(call_sid, test_id, test_data):
+    """
+    Initialize OpenAI session for the conversation.
+    """
+    try:
+        # Extract persona and behavior details
+        persona_name = test_data.get("config", {}).get(
+            "persona_name", "Default Persona"
+        )
+        behavior_name = test_data.get("config", {}).get(
+            "behavior_name", "Default Behavior"
+        )
 
         # Get persona and behavior
-        persona = None
-        behavior = None
-
-        if hasattr(evaluator_service, "get_persona") and callable(
-            evaluator_service.get_persona
-        ):
-            persona = evaluator_service.get_persona(persona_name)
-
-        if hasattr(evaluator_service, "get_behavior") and callable(
-            evaluator_service.get_behavior
-        ):
-            behavior = evaluator_service.get_behavior(behavior_name)
+        persona = evaluator_service.get_persona(persona_name)
+        behavior = evaluator_service.get_behavior(behavior_name)
 
         # If no persona/behavior found, create default ones
         if not persona:
             from app.models.personas import Persona
 
             persona = Persona(
-                name=persona_name or "Default Persona",
-                traits=["polite", "professional", "helpful"],
+                name=persona_name, traits=["polite", "professional", "helpful"]
             )
 
         if not behavior:
             from app.models.personas import Behavior
 
             behavior = Behavior(
-                name=behavior_name or "Default Behavior",
-                characteristics=["asks questions clearly", "listens attentively"],
+                name=behavior_name,
+                characteristics=["asks clear questions", "listens attentively"],
             )
 
-        # Initialize OpenAI session
-        openai_session = await realtime_service.initialize_session(
+        # Initialize session
+        session = await realtime_service.initialize_session(
             call_sid=call_sid,
             test_id=test_id,
             persona=persona,
             behavior=behavior,
-            knowledge_base=knowledge_base,
+            knowledge_base=evaluator_service.knowledge_base or {},
         )
 
-        # Store in connection data
-        connection_data["openai_session"] = openai_session
-        connection_data["openai_initialized"] = True
+        return session
 
-        logger.info(f"OpenAI session initialized for call {call_sid}, test {test_id}")
-
-        # Send welcome message
-        test_case = connection_data.get("test_data", {}).get("test_case", {})
-        special_instructions = test_case.get("config", {}).get("special_instructions")
-
-        welcome_message = (
-            "Hello, I'm your AI assistant for this call. How can I help you today?"
-        )
-        if special_instructions:
-            welcome_message = (
-                f"Special instructions: {special_instructions}. " + welcome_message
-            )
-
-        await realtime_service.send_message(call_sid, welcome_message)
-
-        # Record in conversation
-        evaluator_service.record_conversation_turn(
-            test_id=test_id,
-            call_sid=call_sid,
-            speaker="evaluator",
-            text=welcome_message,
-        )
-
-        return openai_session
     except Exception as e:
         logger.error(f"Error initializing OpenAI session: {str(e)}")
         import traceback
 
         logger.error(f"Traceback: {traceback.format_exc()}")
         return None
+
+
+async def finalize_test_completion(test_id, call_sid):
+    """
+    Finalize the test after call completion.
+    """
+    try:
+        # Get conversation from real-time service
+        conversation = realtime_service.get_conversation(call_sid)
+
+        # Generate report
+        report = await evaluator_service.generate_report_from_conversation(
+            test_id, conversation
+        )
+
+        # Save report to S3
+        if report:
+            s3_service.save_report(report.dict(), str(report.id))
+
+        # Update test status
+        if test_id in evaluator_service.active_tests:
+            evaluator_service.active_tests[test_id]["status"] = "completed"
+            evaluator_service.active_tests[test_id]["report_id"] = str(report.id)
+
+        # Update in DynamoDB
+        dynamodb_service.update_test_status(test_id, "completed")
+        dynamodb_service.save_test(test_id, evaluator_service.active_tests[test_id])
+
+        logger.info(f"Test {test_id} completed and report generated")
+
+    except Exception as e:
+        logger.error(f"Error finalizing test completion: {str(e)}")
+        import traceback
+
+        logger.error(f"Traceback: {traceback.format_exc()}")
