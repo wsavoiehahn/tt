@@ -91,7 +91,6 @@ class EvaluatorService:
                 )
         return None
 
-    # app/services/evaluator.py - Update the execute_test_case method
     async def execute_test_case(self, test_case: TestCase) -> TestCaseReport:
         """
         Execute a test case by initiating an outbound call to the target agent.
@@ -109,7 +108,7 @@ class EvaluatorService:
         start_time = time.time()
         test_id = str(test_case.id)
 
-        # Log test_case details for debugging
+        # Add more detailed logging to track the execution flow
         logger.error(
             f"DEBUG: Test case details: {test_case.name}, persona: {test_case.config.persona_name}, behavior: {test_case.config.behavior_name}"
         )
@@ -117,32 +116,44 @@ class EvaluatorService:
             f"DEBUG: Test case questions: {[q.text if isinstance(q, dict) else q for q in test_case.config.questions]}"
         )
 
-        # Initialize test tracking in memory
+        # Initialize test tracking in memory with more details
         self.active_tests[test_id] = {
             "test_case": test_case.dict(),
             "status": "starting",
             "start_time": start_time,
             "current_question_index": 0,
             "questions_evaluated": [],
+            "execution_details": [],  # Add a list to track detailed execution steps
         }
+
+        # Add execution detail
+        self.active_tests[test_id]["execution_details"].append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "action": "test_initialized",
+                "status": "starting",
+            }
+        )
 
         # Also save to DynamoDB for persistence across Lambda executions
         from ..services.dynamodb_service import dynamodb_service
 
-        dynamodb_service.save_test(test_id, self.active_tests[test_id])
-        logger.error(f"DEBUG: Test {test_id} saved to DynamoDB")
+        # Make sure we're explicitly saving everything needed by the call initiation process
+        try:
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+            logger.error(f"DEBUG: Test {test_id} saved to DynamoDB")
+        except Exception as ddb_error:
+            logger.error(f"DEBUG: Error saving to DynamoDB: {str(ddb_error)}")
+            import traceback
 
-        # Log active tests after initialization
-        logger.error(
-            f"DEBUG: Active tests after initialization: {self.active_tests.keys()}"
-        )
-        logger.error(
-            f"DEBUG: Test {test_id} initialized with status: {self.active_tests[test_id]['status']}"
-        )
+            logger.error(f"DEBUG: DynamoDB save trace: {traceback.format_exc()}")
 
-        # Save test case configuration
-        s3_service.save_test_case(test_case.dict(), test_id)
-        logger.error(f"DEBUG: Test case saved to S3 for test {test_id}")
+        # Save test case configuration to S3
+        try:
+            s3_service.save_test_case(test_case.dict(), test_id)
+            logger.error(f"DEBUG: Test case saved to S3 for test {test_id}")
+        except Exception as s3_error:
+            logger.error(f"DEBUG: Error saving to S3: {str(s3_error)}")
 
         # Get persona and behavior
         persona = self.get_persona(test_case.config.persona_name)
@@ -152,6 +163,22 @@ class EvaluatorService:
             logger.error(
                 f"DEBUG: Invalid persona or behavior: {test_case.config.persona_name}, {test_case.config.behavior_name}"
             )
+
+            # Update status to failed with error details
+            self.active_tests[test_id]["status"] = "failed"
+            self.active_tests[test_id]["error"] = "Invalid persona or behavior"
+            self.active_tests[test_id]["execution_details"].append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "action": "validation_failed",
+                    "error": "Invalid persona or behavior",
+                }
+            )
+
+            # Update in DynamoDB
+            dynamodb_service.update_test_status(test_id, "failed")
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+
             return TestCaseReport(
                 test_case_id=test_case.id,
                 test_case_name=test_case.name,
@@ -173,33 +200,61 @@ class EvaluatorService:
             # Import at function level to avoid circular imports
             from .twilio_service import twilio_service
 
-            logger.error(
-                f"DEBUG: Before initiating call for test {test_id}, status: {self.active_tests[test_id]['status']}"
+            # CRITICAL - Explicitly set the status to waiting_for_call BEFORE initiating the call
+            self.active_tests[test_id]["status"] = "waiting_for_call"
+            self.active_tests[test_id]["execution_details"].append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "action": "status_updated",
+                    "status": "waiting_for_call",
+                }
             )
 
-            # Explicitly set the status to waiting_for_call BEFORE initiating the call
-            self.active_tests[test_id]["status"] = "waiting_for_call"
             logger.error(
                 f"DEBUG: Set test {test_id} status to waiting_for_call before call initiation"
             )
 
-            # Update in DynamoDB
-            dynamodb_service.update_test_status(test_id, "waiting_for_call")
-            logger.error(f"DEBUG: Updated test status in DynamoDB to waiting_for_call")
+            # Update in DynamoDB immediately
+            try:
+                dynamodb_service.update_test_status(test_id, "waiting_for_call")
+                logger.error(
+                    f"DEBUG: Updated test status in DynamoDB to waiting_for_call"
+                )
 
-            # Save the full test data again to DynamoDB
-            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+                # Save the full test data again to DynamoDB
+                dynamodb_service.save_test(test_id, self.active_tests[test_id])
+                logger.error(f"DEBUG: Saved full test data to DynamoDB")
+            except Exception as ddb_error:
+                logger.error(f"DEBUG: Error updating DynamoDB: {str(ddb_error)}")
 
-            # Initiate the outbound call
-            call_result = twilio_service.initiate_call(test_id)
+            # Initiate the outbound call - with more logging around this critical step
+            logger.error(f"DEBUG: About to initiate Twilio call for test {test_id}")
+            try:
+                call_result = twilio_service.initiate_call(test_id)
+                logger.error(f"DEBUG: Call initiation result: {call_result}")
+            except Exception as twilio_error:
+                logger.error(
+                    f"DEBUG: Twilio call initiation error: {str(twilio_error)}"
+                )
+                import traceback
 
-            logger.error(f"DEBUG: Call initiation result: {call_result}")
+                logger.error(
+                    f"DEBUG: Twilio call error trace: {traceback.format_exc()}"
+                )
+                raise  # Re-raise to be caught by outer exception handler
 
             if "error" in call_result:
                 logger.error(f"DEBUG: Failed to initiate call: {call_result['error']}")
                 # Mark test as failed
                 self.active_tests[test_id]["status"] = "failed"
                 self.active_tests[test_id]["error"] = call_result["error"]
+                self.active_tests[test_id]["execution_details"].append(
+                    {
+                        "timestamp": datetime.now().isoformat(),
+                        "action": "call_failed",
+                        "error": call_result["error"],
+                    }
+                )
 
                 # Update in DynamoDB
                 dynamodb_service.update_test_status(test_id, "failed")
@@ -227,24 +282,46 @@ class EvaluatorService:
                 )
 
             call_sid = call_result["call_sid"]
+            logger.error(f"DEBUG: Call initiated with SID: {call_sid}")
 
-            # Verify the test status is still "waiting_for_call"
+            # Verify the test status is still waiting_for_call and explicitly set it if not
             if self.active_tests[test_id]["status"] != "waiting_for_call":
                 logger.error(
                     f"DEBUG: Test status changed unexpectedly! Current status: {self.active_tests[test_id]['status']}"
                 )
                 # Force the status to be set correctly
                 self.active_tests[test_id]["status"] = "waiting_for_call"
+                self.active_tests[test_id]["execution_details"].append(
+                    {
+                        "timestamp": datetime.now().isoformat(),
+                        "action": "status_forced",
+                        "status": "waiting_for_call",
+                    }
+                )
                 logger.error(f"DEBUG: Forced test status back to waiting_for_call")
 
                 # Update in DynamoDB
                 dynamodb_service.update_test_status(test_id, "waiting_for_call")
 
+            # Add call_sid to test data
             self.active_tests[test_id]["call_sid"] = call_sid
+            self.active_tests[test_id]["execution_details"].append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "action": "call_sid_assigned",
+                    "call_sid": call_sid,
+                }
+            )
 
-            # Update in DynamoDB with call_sid
-            self.active_tests[test_id]["call_sid"] = call_sid
-            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+            # Update in DynamoDB with call_sid and latest status
+            try:
+                self.active_tests[test_id]["call_sid"] = call_sid
+                dynamodb_service.save_test(test_id, self.active_tests[test_id])
+                logger.error(f"DEBUG: Updated test in DynamoDB with call_sid")
+            except Exception as ddb_error:
+                logger.error(
+                    f"DEBUG: Error updating DynamoDB with call_sid: {str(ddb_error)}"
+                )
 
             # Log status again to confirm
             logger.error(
@@ -257,13 +334,18 @@ class EvaluatorService:
             # Update test with call information
             if "calls" not in self.active_tests[test_id]:
                 self.active_tests[test_id]["calls"] = {}
+
             self.active_tests[test_id]["calls"][call_sid] = {
                 "status": "initiated",
                 "start_time": time.time(),
             }
 
-            # Update in DynamoDB again
-            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+            # Update in DynamoDB again to ensure all data is saved
+            try:
+                dynamodb_service.save_test(test_id, self.active_tests[test_id])
+                logger.error(f"DEBUG: Final test data update to DynamoDB complete")
+            except Exception as ddb_error:
+                logger.error(f"DEBUG: Error in final DynamoDB update: {str(ddb_error)}")
 
             logger.error(f"DEBUG: Call initiated: {call_sid} for test {test_id}")
 
@@ -306,6 +388,13 @@ class EvaluatorService:
             # Mark test as failed
             self.active_tests[test_id]["status"] = "failed"
             self.active_tests[test_id]["error"] = str(e)
+            self.active_tests[test_id]["execution_details"].append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "action": "exception",
+                    "error": str(e),
+                }
+            )
 
             # Update in DynamoDB
             from ..services.dynamodb_service import dynamodb_service

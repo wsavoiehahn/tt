@@ -42,146 +42,6 @@ class TwilioService:
         Initiate a call to the AI service agent with the test questions.
         """
         try:
-            # Get the AI service phone number from parameter store
-            ai_service_number = self.ai_service_number
-
-            # If not set, try to get it directly from parameter store
-            if not ai_service_number:
-                ai_service_number = config.get_parameter(
-                    "/twilio/target_phone_number", False
-                )
-                if ai_service_number:
-                    self.ai_service_number = ai_service_number
-                    logger.error(
-                        f"DEBUG: Updated target phone number to: {ai_service_number}"
-                    )
-
-            if not ai_service_number:
-                error_msg = "AI service phone number not configured"
-                logger.error(f"DEBUG: {error_msg}")
-                return {"error": error_msg, "test_id": test_id, "status": "failed"}
-
-            # Get outbound number
-            from_number = self.get_outbound_number()
-            logger.error(f"DEBUG: Using outbound number: {from_number}")
-
-            # Get callback URL from config
-            callback_url = self.callback_url
-            if not callback_url:
-                callback_url = "https://example.com"  # Default for testing
-                logger.error("DEBUG: No callback URL found, using default")
-            else:
-                logger.error(f"DEBUG: Using callback URL: {callback_url}")
-
-            # Import at function level to avoid circular imports
-            from ..services.evaluator import evaluator_service
-
-            # Dump active tests before updating
-            logger.error(
-                f"DEBUG: Active tests before update: {evaluator_service.active_tests}"
-            )
-
-            # Check if the test exists in active_tests
-            if test_id in evaluator_service.active_tests:
-                previous_status = evaluator_service.active_tests[test_id].get(
-                    "status", "unknown"
-                )
-                evaluator_service.active_tests[test_id]["status"] = "waiting_for_call"
-                logger.error(
-                    f"DEBUG: Updated test {test_id} status from {previous_status} to waiting_for_call"
-                )
-                logger.error(
-                    f"DEBUG: Test data after update: {evaluator_service.active_tests[test_id]}"
-                )
-            else:
-                logger.error(f"DEBUG: Test {test_id} not found in active_tests")
-                # Try to get details of all active tests to see what's going on
-                logger.error(
-                    f"DEBUG: Current active tests: {evaluator_service.active_tests}"
-                )
-
-            # Create a simpler TwiML for call initiation
-            response = VoiceResponse()
-            response.say("Connecting to evaluation system...")
-
-            # Set up call parameters - this is the critical part for passing the test_id
-            # We'll include test_id in both the statusCallback and the URL
-            status_callback_url = (
-                f"{callback_url}/webhooks/call-status?test_id={test_id}"
-            )
-            call_started_url = f"{callback_url}/webhooks/call-started?test_id={test_id}"
-
-            logger.error(f"DEBUG: Status callback URL: {status_callback_url}")
-            logger.error(f"DEBUG: Call started URL: {call_started_url}")
-
-            # Log the TwiML
-            logger.error(f"DEBUG: Initial TwiML: {str(response)}")
-
-            # Initiate the call with explicit test_id parameter
-            try:
-                call = self.client.calls.create(
-                    to=ai_service_number,
-                    from_=from_number,
-                    twiml=str(response),
-                    status_callback=status_callback_url,
-                    status_callback_event=[
-                        "queued",
-                        "initiated",
-                        "ringing",
-                        "answered",
-                        "completed",
-                    ],
-                    status_callback_method="POST",
-                    url=call_started_url,
-                    method="POST",
-                )
-                logger.error(
-                    f"DEBUG: Call created successfully with SID: {call.sid}, test_id: {test_id}"
-                )
-            except Exception as call_error:
-                logger.error(
-                    f"DEBUG: Twilio API error creating call: {str(call_error)}"
-                )
-                raise  # Re-raise to be caught by outer exception handler
-
-            # Store call information
-            self.active_calls[call.sid] = {
-                "test_id": test_id,
-                "status": "initiated",
-                "start_time": time.time(),
-                "to": ai_service_number,
-                "from": from_number,
-            }
-
-            logger.error(
-                f"DEBUG: Call initiated: {call.sid} for test {test_id} to {ai_service_number}"
-            )
-
-            # Check active tests once more to confirm status update persisted
-            if test_id in evaluator_service.active_tests:
-                logger.error(
-                    f"DEBUG: Test {test_id} status after call initiation: {evaluator_service.active_tests[test_id].get('status')}"
-                )
-
-            return {
-                "call_sid": call.sid,
-                "status": call.status,
-                "test_id": test_id,
-                "to": ai_service_number,
-            }
-
-        except Exception as e:
-            logger.error(f"DEBUG: ERROR in initiate_call: {str(e)}")
-            # Log detailed exception information including traceback
-            import traceback
-
-            logger.error(f"DEBUG: ERROR TRACEBACK: {traceback.format_exc()}")
-            return {"error": str(e), "test_id": test_id, "status": "failed"}
-
-        """
-        Initiate a call to the AI service agent with the test questions.
-        """
-        try:
             logger.error(f"DEBUG: Initiating call for test_id: {test_id}")
 
             # Get the AI service phone number from parameter store
@@ -189,6 +49,9 @@ class TwilioService:
 
             # If not set, try to get it directly from parameter store
             if not ai_service_number:
+                logger.error(
+                    f"DEBUG: No AI service number found in instance, checking parameter store"
+                )
                 ai_service_number = config.get_parameter(
                     "/twilio/target_phone_number", False
                 )
@@ -197,6 +60,16 @@ class TwilioService:
                     logger.error(
                         f"DEBUG: Updated target phone number to: {ai_service_number}"
                     )
+                else:
+                    # Try alternate parameter name
+                    ai_service_number = config.get_parameter(
+                        "/ai-evaluator/ai_service_phone_number", False
+                    )
+                    if ai_service_number:
+                        self.ai_service_number = ai_service_number
+                        logger.error(
+                            f"DEBUG: Found alternate target phone number: {ai_service_number}"
+                        )
 
             if not ai_service_number:
                 error_msg = "AI service phone number not configured"
@@ -210,20 +83,27 @@ class TwilioService:
             # Get callback URL from config
             callback_url = self.callback_url
             if not callback_url:
-                callback_url = "https://example.com"  # Default for testing
-                logger.error("DEBUG: No callback URL found, using default")
-            else:
-                logger.error(f"DEBUG: Using callback URL: {callback_url}")
+                callback_url = config.get_parameter(
+                    "/ai-evaluator/twilio_callback_url", False
+                )
+                if callback_url:
+                    self.callback_url = callback_url
+                    logger.error(f"DEBUG: Updated callback URL to: {callback_url}")
+                else:
+                    # For testing purposes, use the API Gateway URL
+                    callback_url = (
+                        "https://5apclmbos2.execute-api.us-east-2.amazonaws.com"
+                    )
+                    logger.error(
+                        f"DEBUG: No callback URL found, using API Gateway URL: {callback_url}"
+                    )
+
+            logger.error(f"DEBUG: Using callback URL: {callback_url}")
 
             # Import at function level to avoid circular imports
             from ..services.evaluator import evaluator_service
 
-            # Dump active tests before updating
-            logger.error(
-                f"DEBUG: Active tests before update: {evaluator_service.active_tests}"
-            )
-
-            # Check if the test exists in active_tests
+            # Check if the test exists in active_tests before attempting to update
             if test_id in evaluator_service.active_tests:
                 previous_status = evaluator_service.active_tests[test_id].get(
                     "status", "unknown"
@@ -232,35 +112,70 @@ class TwilioService:
                 logger.error(
                     f"DEBUG: Updated test {test_id} status from {previous_status} to waiting_for_call"
                 )
+
+                # Also update in DynamoDB
+                from ..services.dynamodb_service import dynamodb_service
+
+                dynamodb_service.update_test_status(test_id, "waiting_for_call")
+                dynamodb_service.save_test(
+                    test_id, evaluator_service.active_tests[test_id]
+                )
                 logger.error(
-                    f"DEBUG: Test data after update: {evaluator_service.active_tests[test_id]}"
+                    f"DEBUG: Updated test status in DynamoDB to waiting_for_call"
                 )
             else:
-                logger.error(f"DEBUG: Test {test_id} not found in active_tests")
-                # Try to get details of all active tests to see what's going on
+                # This is a critical error - the test should exist in active_tests
                 logger.error(
-                    f"DEBUG: Current active tests: {evaluator_service.active_tests}"
+                    f"DEBUG: CRITICAL ERROR - Test {test_id} not found in active_tests before call initiation"
                 )
+                # Check all active tests
+                logger.error(
+                    f"DEBUG: Active tests: {list(evaluator_service.active_tests.keys())}"
+                )
+                return {
+                    "error": f"Test {test_id} not found in active tests",
+                    "test_id": test_id,
+                    "status": "failed",
+                }
 
-            # Create a simpler TwiML for call initiation
+            # Create a simple TwiML for call initiation with better logging
             response = VoiceResponse()
             response.say("Connecting to evaluation system...")
 
-            # Set up the call status callback
+            # Log TwiML content
+            logger.error(f"DEBUG: Generated TwiML: {str(response)}")
+
+            # Set up call parameters - ensure test_id is passed in multiple places
             status_callback_url = (
                 f"{callback_url}/webhooks/call-status?test_id={test_id}"
             )
-            logger.error(f"DEBUG: Status callback URL: {status_callback_url}")
-
-            # URL for the call-started webhook
             call_started_url = f"{callback_url}/webhooks/call-started?test_id={test_id}"
-            logger.error(f"DEBUG: Call started URL: {call_started_url}")
 
-            # Log the TwiML
-            logger.error(f"DEBUG: Initial TwiML: {str(response)}")
+            logger.error(f"DEBUG: Status callback URL: {status_callback_url}")
+            logger.error(f"DEBUG: Call started URL: {call_started_url}")
 
             # Initiate the call with the simplified TwiML
             try:
+                logger.error(
+                    f"DEBUG: Initiating call to {ai_service_number} from {from_number}"
+                )
+
+                # Log Twilio account info (masked)
+                account_sid_masked = (
+                    f"{self.account_sid[:5]}...{self.account_sid[-5:]}"
+                    if len(self.account_sid) > 10
+                    else "***"
+                )
+                auth_token_masked = (
+                    f"{self.auth_token[:3]}...{self.auth_token[-3:]}"
+                    if len(self.auth_token) > 6
+                    else "***"
+                )
+                logger.error(
+                    f"DEBUG: Using Twilio account: {account_sid_masked}, auth: {auth_token_masked}"
+                )
+
+                # Create the call with all parameters
                 call = self.client.calls.create(
                     to=ai_service_number,
                     from_=from_number,
@@ -276,13 +191,32 @@ class TwilioService:
                     status_callback_method="POST",
                     url=call_started_url,
                     method="POST",
+                    # Add test_id as a parameter in multiple places to ensure it's available
+                    machine_detection="Enable",
+                    machine_detection_timeout=30,
+                    machine_detection_speech_threshold=2500,
+                    machine_detection_speech_end_threshold=1000,
+                    machine_detection_silence_timeout=5000,
+                    # Add optional parameters
+                    record=True,
                 )
                 logger.error(f"DEBUG: Call created successfully with SID: {call.sid}")
+
+                # Also log call direction to verify it's outbound
+                logger.error(f"DEBUG: Call direction: {call.direction}")
             except Exception as call_error:
                 logger.error(
                     f"DEBUG: Twilio API error creating call: {str(call_error)}"
                 )
-                raise  # Re-raise to be caught by outer exception handler
+                # Add more detailed error logging
+                import traceback
+
+                logger.error(f"DEBUG: Twilio error traceback: {traceback.format_exc()}")
+                return {
+                    "error": f"Twilio error: {str(call_error)}",
+                    "test_id": test_id,
+                    "status": "failed",
+                }
 
             # Store call information
             self.active_calls[call.sid] = {
@@ -297,10 +231,21 @@ class TwilioService:
                 f"DEBUG: Call initiated: {call.sid} for test {test_id} to {ai_service_number}"
             )
 
-            # Check active tests once more to confirm status update persisted
-            if test_id in evaluator_service.active_tests:
+            # Update test data with call information
+            try:
+                evaluator_service.active_tests[test_id]["call_sid"] = call.sid
+                evaluator_service.active_tests[test_id]["call_status"] = call.status
+
+                # Update in DynamoDB
+                from ..services.dynamodb_service import dynamodb_service
+
+                dynamodb_service.save_test(
+                    test_id, evaluator_service.active_tests[test_id]
+                )
+                logger.error(f"DEBUG: Updated test with call SID in DynamoDB")
+            except Exception as update_error:
                 logger.error(
-                    f"DEBUG: Test {test_id} status after call initiation: {evaluator_service.active_tests[test_id].get('status')}"
+                    f"DEBUG: Error updating test with call SID: {str(update_error)}"
                 )
 
             return {
