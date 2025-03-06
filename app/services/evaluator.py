@@ -775,6 +775,79 @@ class EvaluatorService:
                 f"Recorded conversation turn for test {test_id}, speaker: {speaker}"
             )
 
+    def record_conversation_turn(
+        self,
+        test_id: str,
+        call_sid: str,
+        speaker: str,
+        text: str,
+        audio_url: Optional[str] = None,
+    ):
+        """
+        Record a turn in the conversation.
+
+        Args:
+            test_id: Test case ID
+            call_sid: Call SID
+            speaker: Speaker identifier (evaluator or agent)
+            text: Text of the turn
+            audio_url: URL of the audio recording (optional)
+
+        Returns:
+            The created turn data
+        """
+        if test_id in self.active_tests:
+            if "conversation" not in self.active_tests[test_id]:
+                self.active_tests[test_id]["conversation"] = []
+
+            # Create the turn data
+            turn = {
+                "speaker": speaker,
+                "text": text,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            if audio_url:
+                turn["audio_url"] = audio_url
+
+            # Add to conversation
+            self.active_tests[test_id]["conversation"].append(turn)
+
+            # Update test in DynamoDB to persist conversation state
+            try:
+                from ..services.dynamodb_service import dynamodb_service
+
+                dynamodb_service.save_test(test_id, self.active_tests[test_id])
+            except Exception as e:
+                logger.error(f"Error saving conversation turn to DynamoDB: {str(e)}")
+
+            logger.info(
+                f"Recorded conversation turn for test {test_id}, speaker: {speaker}"
+            )
+
+            # Broadcast update to websocket clients
+            try:
+                from ..routers.twilio_webhooks import broadcast_update
+                import asyncio
+
+                asyncio.create_task(
+                    broadcast_update(
+                        {
+                            "type": "conversation_update",
+                            "test_id": test_id,
+                            "call_sid": call_sid,
+                            "new_turn": turn,
+                        }
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Error broadcasting conversation update: {str(e)}")
+
+            return turn
+        else:
+            logger.warning(f"Test {test_id} not found for recording conversation turn")
+            return None
+
 
 # Create a singleton instance
 evaluator_service = EvaluatorService()

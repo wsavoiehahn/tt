@@ -4,11 +4,14 @@ import base64
 import asyncio
 import logging
 import websockets
+import time
 from typing import Dict, Any, Optional, List, Tuple, Callable
 from datetime import datetime
+import os
 
 from ..config import config
 from ..models.test_cases import TestCase
+from ..models.personas import Persona, Behavior
 
 logger = logging.getLogger(__name__)
 
@@ -26,30 +29,32 @@ class RealtimeService:
             "OpenAI-Beta": "realtime=v1",
         }
         self.active_sessions = {}  # Store active websocket sessions keyed by call_sid
+        self.max_conversation_turns = 4  # Default max turns after initial question
 
-    async def start_session(
+    async def initialize_session(
         self,
         call_sid: str,
         test_id: str,
-        persona: Dict[str, Any],
-        behavior: Dict[str, Any],
+        persona: Persona,
+        behavior: Behavior,
         knowledge_base: Dict[str, Any],
-        twilio_ws,
-        transcription_callback: Optional[Callable] = None,
-    ):
+    ) -> Dict[str, Any]:
         """
-        Start a real-time session with OpenAI.
+        Initialize a real-time session with OpenAI.
 
         Args:
             call_sid: Twilio call SID
-            test_id: Test case ID
+            test_id: Test ID
             persona: Persona configuration
             behavior: Behavior configuration
             knowledge_base: Knowledge base data
-            twilio_ws: Twilio websocket connection
-            transcription_callback: Callback function for transcription events
+
+        Returns:
+            Session data dictionary
         """
-        logger.info(f"Starting real-time session for call {call_sid}, test {test_id}")
+        logger.info(
+            f"Initializing real-time session for call {call_sid}, test {test_id}"
+        )
 
         # Create system message from persona, behavior, and knowledge base
         system_message = self._create_system_prompt(persona, behavior, knowledge_base)
@@ -61,48 +66,73 @@ class RealtimeService:
                 extra_headers=self.headers,
             )
 
+            # Load test case details to get the question
+            from ..services.evaluator import evaluator_service
+
+            test_data = evaluator_service.active_tests.get(test_id, {})
+            test_case = test_data.get("test_case", {})
+            questions = test_case.get("config", {}).get("questions", [])
+            special_instructions = test_case.get("config", {}).get(
+                "special_instructions"
+            )
+
+            # Get first question if available
+            first_question = ""
+            if questions and len(questions) > 0:
+                question_obj = questions[0]
+                if isinstance(question_obj, dict):
+                    first_question = question_obj.get("text", "")
+                else:
+                    first_question = str(question_obj)
+
+            # Set max turns from test case config if available
+            max_turns = test_case.get("config", {}).get("max_turns", 4)
+
             # Store the session
-            self.active_sessions[call_sid] = {
+            session_data = {
                 "openai_ws": openai_ws,
                 "test_id": test_id,
+                "call_sid": call_sid,
                 "start_time": datetime.now(),
                 "conversation": [],
-                "twilio_ws": twilio_ws,
-                "transcription_callback": transcription_callback,
                 "stream_sid": None,
                 "audio_buffer": bytearray(),
                 "current_transcript": "",
                 "last_response_time": None,
+                "last_response_audio": None,
                 "speaking": False,
                 "waiting_for_response": False,
+                "system_message": system_message,
+                "first_question": first_question,
+                "special_instructions": special_instructions,
+                "current_turn": 0,
+                "max_turns": max_turns,
+                "conversation_complete": False,
             }
 
+            self.active_sessions[call_sid] = session_data
+
             # Initialize the session
-            await self._initialize_session(openai_ws, system_message)
+            await self._initialize_session_config(openai_ws, system_message)
 
-            # Start processing tasks
-            incoming_task = asyncio.create_task(
-                self._process_incoming_audio(twilio_ws, openai_ws, call_sid)
-            )
-            outgoing_task = asyncio.create_task(
-                self._process_outgoing_audio(
-                    openai_ws, twilio_ws, call_sid, transcription_callback
-                )
-            )
+            # Start listener for OpenAI responses
+            asyncio.create_task(self._listen_for_openai_responses(call_sid))
 
-            # Wait for both tasks to complete
-            await asyncio.gather(incoming_task, outgoing_task)
+            logger.info(f"OpenAI session initialized for call {call_sid}")
+            return session_data
 
         except Exception as e:
-            logger.error(f"Error in real-time session for call {call_sid}: {str(e)}")
+            logger.error(
+                f"Error in initializing real-time session for call {call_sid}: {str(e)}"
+            )
             import traceback
 
             logger.error(f"Traceback: {traceback.format_exc()}")
-            # Cleanup session
+            # Clean up any partial initialization
             await self.end_session(call_sid)
             raise
 
-    async def _initialize_session(self, openai_ws, system_message: str):
+    async def _initialize_session_config(self, openai_ws, system_message: str):
         """
         Initialize the OpenAI session with system message and configuration.
 
@@ -122,6 +152,7 @@ class RealtimeService:
                     "instructions": system_message,
                     "modalities": ["text", "audio"],
                     "temperature": 0.7,
+                    "beam_size": 5,  # Increase beam size for better output
                 },
             }
 
@@ -130,359 +161,311 @@ class RealtimeService:
             logger.info("Sent session configuration to OpenAI")
 
             # Ready to receive audio
-            logger.info("Realtime session initialized successfully")
+            logger.info("Realtime session initialization completed")
         except Exception as e:
             logger.error(f"Error initializing session: {str(e)}")
             raise
 
-    async def _process_incoming_audio(self, twilio_ws, openai_ws, call_sid: str):
+    async def start_conversation(self, call_sid: str):
         """
-        Process incoming audio from Twilio and send to OpenAI.
+        Start the conversation by having the AI evaluator ask the first question.
 
         Args:
-            twilio_ws: Twilio websocket connection
-            openai_ws: OpenAI websocket connection
             call_sid: Twilio call SID
         """
-        try:
-            # Keep track of media timestamps for calculating response times
-            latest_media_timestamp = 0
+        if call_sid not in self.active_sessions:
+            logger.error(f"No active session found for call {call_sid}")
+            return False
 
-            async for message in twilio_ws.iter_text():
-                # Parse Twilio media message
-                data = json.loads(message)
+        session_data = self.active_sessions[call_sid]
+        first_question = session_data.get("first_question", "")
+        special_instructions = session_data.get("special_instructions", "")
 
-                if data.get("event") == "media" and call_sid in self.active_sessions:
-                    session_data = self.active_sessions[call_sid]
+        # Construct the initial prompt for the evaluator to say
+        intro_message = (
+            "Hello, this is an automated call from the AI evaluation system."
+        )
 
-                    # Check if OpenAI connection is still open
-                    if not openai_ws.open:
-                        logger.warning(f"OpenAI WebSocket closed for call {call_sid}")
-                        break
+        if special_instructions:
+            intro_message += f" Special instructions: {special_instructions}."
 
-                    # Update timestamp
-                    latest_media_timestamp = int(data["media"]["timestamp"])
-                    session_data["latest_media_timestamp"] = latest_media_timestamp
-
-                    # Extract audio payload
-                    audio_payload = data["media"]["payload"]
-
-                    try:
-                        # If OpenAI is not speaking, forward the audio
-                        if not session_data.get("speaking", False):
-                            # Send audio to OpenAI
-                            audio_append = {
-                                "type": "input_audio_buffer.append",
-                                "audio": audio_payload,
-                            }
-                            await openai_ws.send(json.dumps(audio_append))
-                    except Exception as audio_error:
-                        logger.error(
-                            f"Error sending audio to OpenAI: {str(audio_error)}"
-                        )
-
-                elif data.get("event") == "start":
-                    # Log the start of the stream
-                    stream_sid = data["start"]["streamSid"]
-                    logger.info(f"Incoming Twilio stream started: {stream_sid}")
-
-                    # Store stream_sid in session data
-                    if call_sid in self.active_sessions:
-                        self.active_sessions[call_sid]["stream_sid"] = stream_sid
-                        self.active_sessions[call_sid]["latest_media_timestamp"] = 0
-
-                elif data.get("event") == "stop":
-                    # Log the end of the stream
-                    logger.info(f"Incoming Twilio stream stopped for call {call_sid}")
-
-                    # Close the OpenAI connection
-                    await self.end_session(call_sid)
-                    break
-
-        except Exception as e:
-            logger.error(
-                f"Error processing incoming audio for call {call_sid}: {str(e)}"
+        if first_question:
+            intro_message += f" Here's my question: {first_question}"
+        else:
+            intro_message += (
+                " I'd like to ask you a few questions about your experience."
             )
-            import traceback
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # Cleanup session
-            await self.end_session(call_sid)
+        logger.info(
+            f"Starting conversation for call {call_sid} with message: {intro_message}"
+        )
 
-    async def _process_outgoing_audio(
-        self, openai_ws, twilio_ws, call_sid: str, transcription_callback=None
-    ):
+        # Send the message to OpenAI
+        await self.send_message(call_sid, intro_message)
+
+        # Record the first turn
+        from ..services.evaluator import evaluator_service
+
+        evaluator_service.record_conversation_turn(
+            test_id=session_data["test_id"],
+            call_sid=call_sid,
+            speaker="evaluator",
+            text=intro_message,
+        )
+
+        # Increment turn counter
+        session_data["current_turn"] += 1
+
+        return True
+
+    async def _listen_for_openai_responses(self, call_sid: str):
         """
-        Process outgoing audio from OpenAI and send to Twilio.
+        Listen for responses from OpenAI and process them.
 
         Args:
-            openai_ws: OpenAI websocket connection
-            twilio_ws: Twilio websocket connection
-            call_sid: Twilio call SID
-            transcription_callback: Callback function for transcription events
+            call_sid: The call SID
         """
+        if call_sid not in self.active_sessions:
+            logger.error(f"No active session found for call {call_sid}")
+            return
+
+        session_data = self.active_sessions[call_sid]
+        openai_ws = session_data.get("openai_ws")
+
+        if not openai_ws:
+            logger.error(f"No WebSocket connection found for call {call_sid}")
+            return
+
         try:
-            if call_sid not in self.active_sessions:
-                logger.error(f"Session data not found for call {call_sid}")
-                return
+            async for message in openai_ws:
+                try:
+                    response = json.loads(message)
+                    logger.debug(f"OpenAI response: {response.get('type')}")
 
-            session_data = self.active_sessions[call_sid]
-            current_transcript = ""
-            current_audio_buffer = bytearray()
-            response_start_time = None
+                    # Handle audio data
+                    if (
+                        response.get("type") == "response.audio.delta"
+                        and "delta" in response
+                    ):
+                        # Mark that OpenAI is speaking
+                        session_data["speaking"] = True
 
-            # Use the stored system message to initiate the first response
-            await openai_ws.send(
-                json.dumps(
-                    {
-                        "type": "conversation.item.create",
-                        "item": {
-                            "type": "message",
-                            "role": "system",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": "Provide a brief greeting to start the conversation.",
-                                }
-                            ],
-                        },
-                    }
-                )
-            )
+                        # If this is the first chunk, record start time
+                        if not session_data.get("last_response_time"):
+                            session_data["last_response_time"] = datetime.now()
 
-            # Start response generation
-            await openai_ws.send(json.dumps({"type": "response.create"}))
+                        # Decode audio and store
+                        audio_data = base64.b64decode(response["delta"])
+                        session_data["audio_buffer"] += audio_data
 
-            async for openai_message in openai_ws:
-                if call_sid not in self.active_sessions:
-                    logger.warning(f"Session data no longer exists for call {call_sid}")
-                    break
+                        # Store the latest chunk for immediate streaming
+                        session_data["last_response_audio"] = audio_data
 
-                response = json.loads(openai_message)
+                    # Handle speech recognition events
+                    elif response.get("type") == "input_audio_buffer.speech_started":
+                        logger.info(f"Speech started detected for call {call_sid}")
+                        session_data["waiting_for_response"] = False
 
-                # Handle audio data
-                if (
-                    response.get("type") == "response.audio.delta"
-                    and "delta" in response
-                ):
-                    # Mark that OpenAI is speaking
-                    session_data["speaking"] = True
+                    # Handle transcription events
+                    elif response.get("type") == "input_audio_buffer.transcription":
+                        if response.get("is_final", False):
+                            text = response.get("text", "")
+                            session_data["current_transcript"] = text
 
-                    # If this is the first chunk, record start time
-                    if response_start_time is None:
-                        response_start_time = datetime.now()
-                        session_data["last_response_time"] = response_start_time
+                            logger.info(f"Transcription for call {call_sid}: {text}")
 
-                    try:
-                        # Decode, encode, and send audio data to Twilio
-                        audio_payload = base64.b64encode(
-                            base64.b64decode(response["delta"])
-                        ).decode("utf-8")
+                            # This is the agent's response - record it
+                            from ..services.evaluator import evaluator_service
 
-                        stream_sid = session_data.get("stream_sid")
-                        if stream_sid:
-                            audio_delta = {
-                                "event": "media",
-                                "streamSid": stream_sid,
-                                "media": {"payload": audio_payload},
-                            }
-                            await twilio_ws.send_text(json.dumps(audio_delta))
-
-                        # Accumulate audio data for saving later
-                        current_audio_buffer.extend(base64.b64decode(response["delta"]))
-                    except Exception as audio_error:
-                        logger.error(
-                            f"Error sending audio to Twilio: {str(audio_error)}"
-                        )
-
-                # Handle speech recognition events
-                elif response.get("type") == "input_audio_buffer.speech_started":
-                    logger.info(f"Speech started detected for call {call_sid}")
-                    session_data["waiting_for_response"] = False
-
-                # Handle transcription events
-                elif response.get("type") == "input_audio_buffer.transcription":
-                    # Update current transcript
-                    if response.get("is_final", False):
-                        current_transcript = response.get("text", "")
-                        session_data["current_transcript"] = current_transcript
-
-                        logger.info(
-                            f"Transcription for call {call_sid}: {current_transcript}"
-                        )
-
-                        # Store the transcription
-                        if transcription_callback:
-                            await transcription_callback(
-                                call_sid, "user", current_transcript
+                            evaluator_service.record_conversation_turn(
+                                test_id=session_data["test_id"],
+                                call_sid=call_sid,
+                                speaker="agent",
+                                text=text,
                             )
 
-                        # Add to conversation history
+                            # Add to session conversation history
+                            session_data["conversation"].append(
+                                {
+                                    "speaker": "agent",
+                                    "text": text,
+                                    "timestamp": datetime.now().isoformat(),
+                                }
+                            )
+
+                            # Increment turn counter for agent's response
+                            session_data["current_turn"] += 1
+
+                            # Check if we've reached the max turns
+                            if (
+                                session_data["current_turn"]
+                                >= session_data["max_turns"] * 2
+                            ):  # *2 because we count both sides
+                                # End the conversation after this
+                                session_data["conversation_complete"] = True
+
+                                # Send a closing message
+                                await self.send_message(
+                                    call_sid,
+                                    "Thank you for your responses. That concludes our evaluation for today.",
+                                )
+
+                    # Handle response done events
+                    elif response.get("type") == "response.done":
+                        # Mark that OpenAI is no longer speaking
+                        session_data["speaking"] = False
+                        session_data["waiting_for_response"] = True
+
+                        # Get the final response text
+                        response_text = ""
+                        for item in response.get("response", {}).get("output", []):
+                            for content in item.get("content", []):
+                                if content.get("type") == "text":
+                                    response_text += content.get("text", "")
+
+                        # Calculate response time
+                        response_time = 0
+                        if session_data.get("last_response_time"):
+                            response_time = (
+                                datetime.now() - session_data["last_response_time"]
+                            ).total_seconds()
+
+                        # Store the complete audio buffer
+                        audio_buffer = session_data.get("audio_buffer", bytearray())
+
+                        # Reset audio buffer
+                        session_data["audio_buffer"] = bytearray()
+                        session_data["last_response_time"] = None
+
+                        logger.info(
+                            f"AI Evaluator response for call {call_sid}: {response_text}"
+                        )
+
+                        # This is the evaluator's response - record it
+                        from ..services.evaluator import evaluator_service
+
+                        if audio_buffer:
+                            # Save the audio to S3
+                            from ..services.s3_service import s3_service
+
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            audio_filename = f"{timestamp}_evaluator_response.mp3"
+                            s3_key = f"tests/{session_data['test_id']}/calls/{call_sid}/recordings/{audio_filename}"
+
+                            # Upload the audio data
+                            s3_service.s3_client.put_object(
+                                Bucket=s3_service.bucket_name,
+                                Key=s3_key,
+                                Body=audio_buffer,
+                                ContentType="audio/mp3",
+                            )
+
+                            s3_url = f"s3://{s3_service.bucket_name}/{s3_key}"
+
+                            # Record with audio URL
+                            evaluator_service.record_conversation_turn(
+                                test_id=session_data["test_id"],
+                                call_sid=call_sid,
+                                speaker="evaluator",
+                                text=response_text,
+                                audio_url=s3_url,
+                            )
+                        else:
+                            # Record without audio URL
+                            evaluator_service.record_conversation_turn(
+                                test_id=session_data["test_id"],
+                                call_sid=call_sid,
+                                speaker="evaluator",
+                                text=response_text,
+                            )
+
+                        # Add to session conversation history
                         session_data["conversation"].append(
                             {
-                                "speaker": "user",
-                                "text": current_transcript,
+                                "speaker": "evaluator",
+                                "text": response_text,
                                 "timestamp": datetime.now().isoformat(),
+                                "response_time": response_time,
                             }
                         )
 
-                # Handle response done events
-                elif response.get("type") == "response.done":
-                    # Mark that OpenAI is no longer speaking
-                    session_data["speaking"] = False
-                    session_data["waiting_for_response"] = True
+                        # Increment turn counter for evaluator's response
+                        session_data["current_turn"] += 1
 
-                    # Get the final response text
-                    response_text = ""
-                    for item in response.get("response", {}).get("output", []):
-                        for content in item.get("content", []):
-                            if content.get("type") == "text":
-                                response_text += content.get("text", "")
+                        # Check if this was a closing message or if we've reached max turns
+                        if (
+                            session_data.get("conversation_complete")
+                            or "concludes our evaluation" in response_text.lower()
+                        ):
+                            logger.info(
+                                f"Conversation complete for call {call_sid} after {session_data['current_turn']} turns"
+                            )
 
-                    # Calculate response time
-                    response_time = 0
-                    if response_start_time:
-                        response_time = (
-                            datetime.now() - response_start_time
-                        ).total_seconds()
+                            # End the WebSocket connection
+                            await self.end_session(call_sid)
 
-                    logger.info(f"Response for call {call_sid}: {response_text}")
+                            # End the Twilio call
+                            from ..services.twilio_service import twilio_service
 
-                    # Store the response
-                    session_data["conversation"].append(
-                        {
-                            "speaker": "assistant",
-                            "text": response_text,
-                            "timestamp": datetime.now().isoformat(),
-                            "response_time": response_time,
-                        }
+                            twilio_service.end_call(call_sid)
+
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Received non-JSON message from OpenAI: {message[:100]}"
                     )
+                except Exception as e:
+                    logger.error(f"Error processing OpenAI message: {str(e)}")
+                    import traceback
 
-                    # Call transcription callback
-                    if transcription_callback and current_audio_buffer:
-                        await transcription_callback(
-                            call_sid,
-                            "assistant",
-                            response_text,
-                            bytes(current_audio_buffer),
-                        )
-
-                    # Reset for next turn
-                    current_transcript = ""
-                    current_audio_buffer = bytearray()
-                    response_start_time = None
-
-                    # Send mark for question completion
-                    mark_message = {
-                        "event": "mark",
-                        "streamSid": session_data.get("stream_sid"),
-                        "mark": {"name": "question_complete"},
-                    }
-                    try:
-                        await twilio_ws.send_text(json.dumps(mark_message))
-                    except Exception as mark_error:
-                        logger.error(f"Error sending mark to Twilio: {str(mark_error)}")
-
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"OpenAI WebSocket connection closed for call {call_sid}")
         except Exception as e:
             logger.error(
-                f"Error processing outgoing audio for call {call_sid}: {str(e)}"
+                f"Error in listening for OpenAI responses for call {call_sid}: {str(e)}"
             )
             import traceback
 
             logger.error(f"Traceback: {traceback.format_exc()}")
+        finally:
+            # Clean up if needed
+            if call_sid in self.active_sessions:
+                await self.end_session(call_sid)
 
-    def _create_system_prompt(
-        self,
-        persona: Dict[str, Any],
-        behavior: Dict[str, Any],
-        knowledge_base: Dict[str, Any],
-    ) -> str:
+    async def process_audio_chunk(self, call_sid: str, audio_chunk: str):
         """
-        Create a system prompt based on persona, behavior, and knowledge base.
-
-        Args:
-            persona: Persona configuration
-            behavior: Behavior configuration
-            knowledge_base: Knowledge base data
-
-        Returns:
-            System prompt string
-        """
-        persona_traits = ", ".join(persona.get("traits", []))
-        behavior_chars = ", ".join(behavior.get("characteristics", []))
-
-        # Format FAQ knowledge base
-        faq_section = ""
-        for faq_dict in knowledge_base.get("faqs", []):
-            for q, a in faq_dict.items():
-                faq_section += f"Q: {q}\nA: {a}\n\n"
-
-        # Create system prompt
-        system_prompt = f"""
-        You are a call center agent for Sendero Health Plans.
-        
-        You should act according to this persona: {persona.get('name')}
-        Traits: {persona_traits}
-        
-        The caller will exhibit the following behavior: {behavior.get('name')}
-        Characteristics: {behavior_chars}
-        
-        Use natural, conversational language appropriate for a call center agent.
-        Be helpful, concise, and accurate in your responses.
-        Keep your responses brief and to the point, focusing on answering the caller's questions directly.
-        
-        Here is the knowledge base you should use to answer questions:
-        
-        {faq_section}
-        
-        IVR Script:
-        {knowledge_base.get('ivr_script', {}).get('welcome_message', '')}
-        
-        Important guidelines:
-        1. Be empathetic and patient with callers
-        2. Provide accurate information based on the knowledge base
-        3. If you don't know an answer, admit it and offer to help in other ways
-        4. Speak in a natural, conversational tone
-        5. Keep responses brief and focused
-        6. Wait for the caller to finish speaking before responding
-        """
-
-        return system_prompt
-
-    async def end_session(self, call_sid: str):
-        """
-        End a real-time session.
+        Process an audio chunk from Twilio.
 
         Args:
             call_sid: Twilio call SID
+            audio_chunk: Base64-encoded audio chunk
         """
-        if call_sid in self.active_sessions:
-            openai_ws = self.active_sessions[call_sid].get("openai_ws")
-            if openai_ws and openai_ws.open:
-                try:
-                    await openai_ws.close()
-                except Exception as e:
-                    logger.error(f"Error closing OpenAI WebSocket: {str(e)}")
+        if call_sid not in self.active_sessions:
+            logger.error(f"Session not found for call {call_sid}")
+            return
 
-            # Remove from active sessions
-            del self.active_sessions[call_sid]
+        session_data = self.active_sessions[call_sid]
+        openai_ws = session_data.get("openai_ws")
 
-            logger.info(f"Ended real-time session for call {call_sid}")
+        if not openai_ws or not openai_ws.open:
+            logger.error(f"WebSocket not open for call {call_sid}")
+            return
 
-    def get_conversation(self, call_sid: str) -> List[Dict[str, Any]]:
-        """
-        Get the conversation history for a call.
+        try:
+            # If OpenAI is not speaking, forward the audio
+            if not session_data.get("speaking", False):
+                # Send audio to OpenAI
+                audio_append = {
+                    "type": "input_audio_buffer.append",
+                    "audio": audio_chunk,
+                }
+                await openai_ws.send(json.dumps(audio_append))
+                logger.debug(f"Sent audio chunk to OpenAI for call {call_sid}")
+        except Exception as e:
+            logger.error(f"Error processing audio chunk: {str(e)}")
+            import traceback
 
-        Args:
-            call_sid: Twilio call SID
-
-        Returns:
-            List of conversation turns
-        """
-        if call_sid in self.active_sessions:
-            return self.active_sessions[call_sid].get("conversation", [])
-
-        return []
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     async def send_message(self, call_sid: str, message: str):
         """
@@ -529,37 +512,105 @@ class RealtimeService:
             logger.info(f"Sent message to OpenAI for call {call_sid}: {message}")
         except Exception as e:
             logger.error(f"Error sending message: {str(e)}")
+            import traceback
 
-    async def process_audio_chunk(self, call_sid: str, audio_chunk: str):
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
+    async def end_session(self, call_sid: str):
         """
-        Process an audio chunk from Twilio.
+        End a real-time session.
 
         Args:
             call_sid: Twilio call SID
-            audio_chunk: Base64-encoded audio chunk
         """
-        if call_sid not in self.active_sessions:
-            logger.error(f"Session not found for call {call_sid}")
-            return
+        if call_sid in self.active_sessions:
+            openai_ws = self.active_sessions[call_sid].get("openai_ws")
+            if openai_ws and openai_ws.open:
+                try:
+                    await openai_ws.close()
+                    logger.info(f"Closed OpenAI WebSocket for call {call_sid}")
+                except Exception as e:
+                    logger.error(f"Error closing OpenAI WebSocket: {str(e)}")
 
-        session_data = self.active_sessions[call_sid]
-        openai_ws = session_data.get("openai_ws")
+            # Remove from active sessions
+            del self.active_sessions[call_sid]
+            logger.info(f"Ended real-time session for call {call_sid}")
 
-        if not openai_ws or not openai_ws.open:
-            logger.error(f"WebSocket not open for call {call_sid}")
-            return
+    def get_conversation(self, call_sid: str) -> List[Dict[str, Any]]:
+        """
+        Get the conversation history for a call.
 
-        try:
-            # If OpenAI is not speaking, forward the audio
-            if not session_data.get("speaking", False):
-                # Send audio to OpenAI
-                audio_append = {
-                    "type": "input_audio_buffer.append",
-                    "audio": audio_chunk,
-                }
-                await openai_ws.send(json.dumps(audio_append))
-        except Exception as e:
-            logger.error(f"Error processing audio chunk: {str(e)}")
+        Args:
+            call_sid: Twilio call SID
+
+        Returns:
+            List of conversation turns
+        """
+        if call_sid in self.active_sessions:
+            return self.active_sessions[call_sid].get("conversation", [])
+
+        return []
+
+    def _create_system_prompt(
+        self,
+        persona: Persona,
+        behavior: Behavior,
+        knowledge_base: Dict[str, Any],
+    ) -> str:
+        """
+        Create a system prompt based on persona, behavior, and knowledge base.
+
+        Args:
+            persona: Persona configuration
+            behavior: Behavior configuration
+            knowledge_base: Knowledge base data
+
+        Returns:
+            System prompt string
+        """
+        persona_traits = ", ".join(persona.traits)
+        behavior_chars = ", ".join(behavior.characteristics)
+
+        # Format FAQ knowledge base
+        faq_section = ""
+        for faq_dict in knowledge_base.get("faqs", []):
+            for q, a in faq_dict.items():
+                faq_section += f"Q: {q}\nA: {a}\n\n"
+
+        # Create system prompt for the AI as the evaluator, not the agent
+        system_prompt = f"""
+        You are an AI evaluator conducting an assessment call to test a call center agent.
+        
+        You are calling to evaluate an agent's performance.
+        
+        Your persona is: {persona.name}
+        Traits: {persona_traits}
+        
+        You are exhibiting the following behavior: {behavior.name}
+        Characteristics: {behavior_chars}
+        
+        You should ask questions to the agent and evaluate their responses. Your primary goal is to:
+        1. Ask your assigned question clearly
+        2. Listen to the agent's response
+        3. Ask appropriate follow-up questions (up to {self.max_conversation_turns-1} follow-ups)
+        4. Evaluate if the agent provides accurate information according to the knowledge base
+        5. Evaluate the agent's empathy and responsiveness
+        
+        When the conversation is complete, thank the agent and end the call politely.
+        
+        Here is the knowledge base with correct information the agent should know:
+        
+        {faq_section}
+        
+        Important guidelines:
+        1. Be conversational and natural
+        2. Ask your question clearly and listen to the response
+        3. Evaluate both accuracy and empathy in the agent's responses
+        4. End the call after getting satisfactory answers or after {self.max_conversation_turns} turns
+        5. Keep your responses concise
+        """
+
+        return system_prompt
 
 
 # Create a singleton instance

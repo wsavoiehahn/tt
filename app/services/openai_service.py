@@ -205,7 +205,7 @@ class OpenAIService:
         You are currently exhibiting the following behavior: {behavior.name}
         Characteristics: {behavior_chars}
         
-        You are calling an AI customer service agent for a health insurance company called Sendero Health.
+        You are calling an AI customer service agent.
         You need to ask about the following question: "{question}"
         
         Use natural, conversational language appropriate for your persona and behavior.
