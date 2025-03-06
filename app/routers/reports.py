@@ -34,19 +34,27 @@ async def list_reports(
     logger.info(f"Listing reports (limit: {limit}, offset: {offset})")
     reports = reporting_service.list_reports(limit=limit)
 
+    # Create a new list with deduplicated reports based on report_id
+    unique_reports = {}
     for report in reports:
         if "report_id" in report:
-            report_data = reporting_service.get_report(report["report_id"])
-            if report_data:
-                # Include important fields directly at the top level
-                report["persona_name"] = report_data.get("persona_name")
-                report["behavior_name"] = report_data.get("behavior_name")
-                report["test_case_name"] = report_data.get("test_case_name")
+            report_id = report["report_id"]
 
-    return reports
-    # # Apply offset if needed
-    # if offset > 0:
-    #     reports = reports[offset:] if offset < len(reports) else []
+            # Only process this report if we haven't seen this ID before
+            if report_id not in unique_reports:
+                # If needed, fetch additional data and enhance the report
+                if "persona_name" not in report and "data" not in report:
+                    report_data = reporting_service.get_report(report_id)
+                    if report_data:
+                        # Include important fields directly at the top level
+                        report["persona_name"] = report_data.get("persona_name")
+                        report["behavior_name"] = report_data.get("behavior_name")
+                        report["test_case_name"] = report_data.get("test_case_name")
+
+                unique_reports[report_id] = report
+
+    # Convert back to a list
+    return list(unique_reports.values())
 
 
 @router.get("/{report_id}", response_model=Dict[str, Any])
