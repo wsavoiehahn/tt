@@ -339,49 +339,42 @@ class TwilioService:
             return default_number
 
     def generate_stream_twiml(self, test_id: str, call_sid: str) -> str:
-        """Generate TwiML for directly asking the first question."""
-        # Get the first question for this test
-        from ..services.evaluator import evaluator_service
+        """
+        Generate TwiML for connecting to a media stream.
+        """
+        # Get REST callback URL from config
+        callback_url = config.get_parameter("/ai-evaluator/twilio_callback_url")
+        if not callback_url:
+            callback_url = "https://5apclmbos2.execute-api.us-east-2.amazonaws.com"
 
-        question = "Hello, this is a test question."
+        # Get WebSocket URL from config
+        websocket_url = config.get_parameter("/ai-evaluator/websocket_endpoint")
+        if not websocket_url:
+            websocket_url = "wss://15cv5bu809.execute-api.us-east-2.amazonaws.com/dev"
 
-        # If the test exists, get the actual first question
-        if test_id in evaluator_service.active_tests:
-            test_data = evaluator_service.active_tests[test_id]
-            test_case = test_data.get("test_case", {})
-            questions = test_case.get("config", {}).get("questions", [])
-
-            if questions:
-                first_question = questions[0]
-                if isinstance(first_question, dict):
-                    first_question = first_question.get("text", "")
-                else:
-                    first_question = first_question
-
-                # Get special instructions if any
-                special_instructions = test_case.get("config", {}).get(
-                    "special_instructions"
-                )
-
-                if special_instructions:
-                    question = f"{special_instructions}. {first_question}"
-                else:
-                    question = first_question
-
-        # Create TwiML response
+        # Create VoiceResponse object
         response = VoiceResponse()
 
-        # Add an introduction and the first question
+        # Add initial message
         response.say("Starting evaluation call.")
-        response.pause(length=1)
-        response.say(question)
 
-        # Add a recording instruction
-        response.record(timeout=10, transcribe=True)
+        # Create media stream URL using WebSocket endpoint
+        stream_url = f"{websocket_url}"
 
-        # Add a goodbye message
-        response.pause(length=1)
-        response.say("Thank you for your response. This concludes our test.")
+        # Add query parameters
+        stream_url += f"?test_id={test_id}&call_sid={call_sid}"
+
+        logger.error(f"DEBUG: Using WebSocket URL: {stream_url}")
+
+        # Create Connect and Stream objects
+        connect = Connect()
+        stream = Stream(url=stream_url)
+
+        # Add Stream to Connect and Connect to response
+        connect.append(stream)
+        response.append(connect)
+
+        logger.error(f"DEBUG: Generated TwiML: {str(response)}")
 
         return str(response)
 
