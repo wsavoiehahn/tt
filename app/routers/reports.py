@@ -201,6 +201,64 @@ async def delete_report(report_id: str):
         raise HTTPException(status_code=500, detail=f"Error deleting report: {str(e)}")
 
 
+@router.get("/presigned-audio-url", response_model=Dict[str, str])
+async def get_presigned_audio_url(
+    s3_url: str = Query(..., description="S3 URL of the audio recording")
+):
+    """
+    Generate a presigned URL for an audio recording stored in S3.
+
+    Args:
+        s3_url: Full S3 URL (s3://bucket/key)
+
+    Returns:
+        Dict with presigned URL and content type
+    """
+    logger.info(f"Generating presigned URL for: {s3_url}")
+
+    try:
+        # Parse the S3 URL
+        if not s3_url.startswith("s3://"):
+            raise HTTPException(
+                status_code=400, detail="Invalid S3 URL format, must start with s3://"
+            )
+
+        # Extract bucket and key from s3://bucket/key format
+        parts = s3_url.replace("s3://", "").split("/", 1)
+        if len(parts) != 2:
+            raise HTTPException(
+                status_code=400, detail="Invalid S3 URL format, must be s3://bucket/key"
+            )
+
+        bucket = parts[0]
+        key = parts[1]
+
+        # Generate presigned URL
+        presigned_url = s3_service.generate_presigned_url(
+            key, expiration=3600  # URL valid for 1 hour
+        )
+
+        if not presigned_url:
+            raise HTTPException(
+                status_code=404, detail="Failed to generate presigned URL"
+            )
+
+        # Determine content type
+        content_type = "audio/mpeg"  # Default for MP3
+        if key.endswith(".wav"):
+            content_type = "audio/wav"
+        elif key.endswith(".ogg"):
+            content_type = "audio/ogg"
+
+        return {"url": presigned_url, "contentType": content_type}
+
+    except Exception as e:
+        logger.error(f"Error generating presigned URL: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error generating presigned URL: {str(e)}"
+        )
+
+
 @router.get("/metrics/summary", response_model=Dict[str, Any])
 async def get_metrics_summary():
     """

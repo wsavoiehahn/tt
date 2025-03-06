@@ -217,3 +217,58 @@ body {
         padding: 1rem;
     }
 }
+
+.waveform-container {
+    width: 100%;
+    margin: 10px 0;
+    background: #f5f5f5;
+    border-radius: 5px;
+  }
+  
+  .waveform-play-button {
+    background: #3498db;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+  
+  .waveform-play-button:hover {
+    background: #2980b9;
+  }
+  
+  .audio-loading {
+    display: flex;
+    align-items: center;
+    margin: 10px 0;
+    color: #666;
+    font-size: 0.9rem;
+  }
+  
+  .spinner {
+    width: 20px;
+    height: 20px;
+    margin-right: 10px;
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  
+  .audio-error {
+    color: #d9534f;
+    margin: 10px 0;
+    font-size: 0.9rem;
+  }
