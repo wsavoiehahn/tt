@@ -13,7 +13,14 @@ logger = logging.getLogger(__name__)
 class LocalStorageService:
     """Service for local file storage when not using S3."""
 
-    def __init__(self, base_path: str = "./local_storage"):
+    def __init__(self, base_path: str = ""):
+
+        if not base_path:
+            # Check if running in AWS Lambda
+            if os.environ.get("AWS_EXECUTION_ENV"):
+                base_path = "/tmp/local_storage"
+            else:
+                base_path = "./local_storage"
         self.base_path = Path(base_path)
         self.bucket_name = "local-bucket"
 
