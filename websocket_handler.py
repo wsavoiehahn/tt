@@ -27,11 +27,13 @@ active_connections = {}
 
 
 def import_services():
-    """
-    Dynamically import services with comprehensive error handling.
-    """
     global openai_service, evaluator_service, realtime_service, dynamodb_service, s3_service
     try:
+        # Add proper Python path
+        import sys
+
+        sys.path.append("/var/task")
+
         from app.services.openai_service import openai_service
         from app.services.evaluator import evaluator_service
         from app.services.realtime_service import realtime_service
@@ -49,6 +51,8 @@ def lambda_handler(event, context):
     """
     Enhanced WebSocket handler with comprehensive error logging.
     """
+    logger.error(f"WEBSOCKET EVENT: {json.dumps(event)}")
+
     try:
         # Import services with detailed logging
         import_services()
@@ -64,18 +68,23 @@ def lambda_handler(event, context):
     route_key = event.get("requestContext", {}).get("routeKey")
     domain_name = event.get("requestContext", {}).get("domainName")
     stage = event.get("requestContext", {}).get("stage")
-
-    logger.error(f"Connection details - ID: {connection_id}, Route: {route_key}")
+    integration_id = "yul0k45"  # Add this from your route info
+    logger.error(
+        f"Connection ID: {connection_id}, Route: {route_key}, Domain: {domain_name}, Stage: {stage}"
+    )
 
     # Create API Gateway Management client
+    endpoint_url = f"https://{domain_name}/{stage}"
+    logger.error(f"Using endpoint URL: {endpoint_url}")
+
     try:
         api_gateway_management = boto3.client(
-            "apigatewaymanagementapi", endpoint_url=f"https://{domain_name}/{stage}"
+            "apigatewaymanagementapi", endpoint_url=endpoint_url
         )
+        logger.error("API Gateway Management client created successfully")
     except Exception as e:
         logger.error(f"Failed to create API Gateway client: {str(e)}")
         logger.error(traceback.format_exc())
-        return {"statusCode": 500, "body": "API Gateway client creation failed"}
 
     # Handle different routes with enhanced error handling
     try:
@@ -106,7 +115,7 @@ def handle_connect(event, connection_id):
         test_id = query_params.get("test_id")
         call_sid = query_params.get("call_sid")
 
-        logger.info(f"Connect params - test_id: {test_id}, call_sid: {call_sid}")
+        logger.error(f"Connect params - test_id: {test_id}, call_sid: {call_sid}")
 
         # Validate connection parameters
         if not test_id or not call_sid:
@@ -127,6 +136,7 @@ def handle_connect(event, connection_id):
             "connection_attempts": 1,
             "last_activity": datetime.now().isoformat(),
         }
+
         active_connections[connection_id] = connection_data
 
         # Load test data with detailed error handling
@@ -152,7 +162,7 @@ def handle_connect(event, connection_id):
             # Update connection with test data
             if test_data:
                 connection_data["test_data"] = test_data
-                logger.info(f"Successfully loaded test data for {test_id}")
+                logger.error(f"Successfully loaded test data for {test_id}")
             else:
                 logger.warning(f"No test data found for test_id: {test_id}")
 
@@ -174,7 +184,7 @@ def handle_disconnect(event, connection_id):
     Clean up connection resources.
     """
     try:
-        logger.info(f"WebSocket disconnected: {connection_id}")
+        logger.error(f"WebSocket disconnected: {connection_id}")
 
         # Remove from active connections
         connection_data = active_connections.pop(connection_id, None)
@@ -235,7 +245,7 @@ def handle_default_message(event, connection_id, api_gateway_management):
             message_data = json.loads(body)
             event_type = message_data.get("event")
 
-            logger.info(f"Processing message event: {event_type}")
+            logger.error(f"Processing message event: {event_type}")
 
             # Process based on event type
             if event_type == "media":
@@ -264,16 +274,24 @@ def handle_media_event(message_data, connection_data):
     Process media events (audio payloads) from Twilio.
     """
     try:
+        logger.error(f"Processing media event: {json.dumps(message_data)}")
         payload = message_data.get("media", {}).get("payload")
         if not payload:
+            logger.error("No payload in media event")
             return
 
         # Add to audio buffer
         connection_data.setdefault("audio_buffer", []).append(payload)
+        logger.error(
+            f"Added payload to buffer, size: {len(connection_data['audio_buffer'])}"
+        )
 
         # Process buffer when it reaches a certain size
         if len(connection_data["audio_buffer"]) >= 5:
             process_audio_buffer(connection_data)
+    except Exception as e:
+        logger.error(f"Error processing media event: {str(e)}")
+        logger.error(traceback.format_exc())
 
     except Exception as e:
         logger.error(f"Error processing media event: {str(e)}")
@@ -312,7 +330,7 @@ def handle_stream_start(message_data, connection_data):
     """
     try:
         stream_sid = message_data.get("start", {}).get("streamSid")
-        logger.info(f"Stream started: {stream_sid}")
+        logger.error(f"Stream started: {stream_sid}")
 
         # Extract test and call details
         test_id = connection_data.get("test_id")
@@ -340,7 +358,7 @@ def handle_stream_stop(message_data, connection_data):
         test_id = connection_data.get("test_id")
         call_sid = connection_data.get("call_sid")
 
-        logger.info(f"Stream stopped for test {test_id}, call {call_sid}")
+        logger.error(f"Stream stopped for test {test_id}, call {call_sid}")
 
         # End the OpenAI session
         asyncio.create_task(realtime_service.end_session(call_sid))
@@ -447,7 +465,7 @@ async def finalize_test_completion(test_id, call_sid):
         dynamodb_service.update_test_status(test_id, "completed")
         dynamodb_service.save_test(test_id, evaluator_service.active_tests[test_id])
 
-        logger.info(f"Test {test_id} completed and report generated")
+        logger.error(f"Test {test_id} completed and report generated")
 
     except Exception as e:
         logger.error(f"Error finalizing test completion: {str(e)}")

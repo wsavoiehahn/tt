@@ -52,7 +52,8 @@ class RealtimeService:
         if not self.api_key:
             logger.error("CRITICAL: OpenAI API key is missing")
             raise ValueError("OpenAI API key is required")
-
+        logger.error(f"API Key (first 4 chars): {self.api_key[:4]}")
+        logger.error(f"Model: {self.realtime_model}")
         try:
             # Detailed connection attempt logging
             logger.error(f"Connection Details:")

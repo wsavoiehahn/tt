@@ -159,11 +159,12 @@ async def call_started(request: Request):
         # Get WebSocket URL from config or use default
         websocket_url = config.get_parameter("/ai-evaluator/websocket_endpoint", False)
         if not websocket_url:
-            # Use API Gateway WebSocket URL from environment or default
-            websocket_url = os.environ.get(
-                "WEBSOCKET_ENDPOINT",
-                "wss://15cv5bu809.execute-api.us-east-2.amazonaws.com/dev",
-            )
+            # Use API Gateway WebSocket URL
+            domain_name = request.headers.get("host", "")
+            stage = "dev"  # or get from environment
+            websocket_url = f"wss://{domain_name}/{stage}"
+
+        logger.error(f"Using WebSocket URL: {websocket_url}")
 
         # Create TwiML
         response = VoiceResponse()
@@ -180,7 +181,7 @@ async def call_started(request: Request):
         )
 
         # Add parameters for audio stream
-        stream.parameter(name="format", value="mulaw")
+        stream.parameter(name="format", value="audio")
         stream.parameter(name="rate", value="8000")
 
         connect.stream(stream)

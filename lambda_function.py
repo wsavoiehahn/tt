@@ -1,4 +1,4 @@
-# lambda.py
+# lambda_function.py
 import logging
 import os
 import traceback
@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from mangum import Mangum
 
+
+# Import FastAPI app
+from app_func import app
 
 # Configure logging
 logging.basicConfig(
@@ -26,7 +29,6 @@ except Exception as e:
 handler = Mangum(app)
 
 
-# Lambda handler function
 def lambda_handler(event, context):
     logger.info("Lambda handler called with event: %s", json.dumps(event))
     try:
