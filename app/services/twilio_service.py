@@ -2,9 +2,13 @@
 import os
 import logging
 import json
+import requests
 from typing import Dict, Any, Optional, List
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather, Start, Connect, Stream
+
+from fastapi import Request
+
 import uuid
 import time
 import asyncio
@@ -36,6 +40,54 @@ class TwilioService:
         logger.error(
             f"DEBUG: TwilioService initialized with account_sid: {self.account_sid[:5]}***, target number: {self.ai_service_number}, callback URL: {self.callback_url}"
         )
+
+    def download_recording(self, recording_url: str) -> Optional[bytes]:
+        """
+        Download a recording from Twilio.
+
+        Args:
+            recording_url: URL of the recording to download
+
+        Returns:
+            Audio data as bytes, or None if download failed
+        """
+        try:
+            logger.info(f"Downloading recording from: {recording_url}")
+
+            # Check if URL is valid
+            if not recording_url or not recording_url.startswith("http"):
+                logger.error(f"Invalid recording URL: {recording_url}")
+                return None
+
+            # Add .mp3 extension if not present
+            if not recording_url.endswith(".mp3"):
+                recording_url = f"{recording_url}.mp3"
+
+            # Set up authentication
+            auth = (self.account_sid, self.auth_token)
+
+            # Download the recording
+            response = requests.get(recording_url, auth=auth)
+
+            if response.status_code != 200:
+                logger.error(
+                    f"Failed to download recording: Status {response.status_code}"
+                )
+                return None
+
+            # Get the audio data
+            audio_data = response.content
+
+            # Log success
+            logger.info(f"Successfully downloaded recording ({len(audio_data)} bytes)")
+
+            return audio_data
+        except Exception as e:
+            logger.error(f"Error downloading recording: {str(e)}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return None
 
     def initiate_call(self, test_id: str) -> Dict[str, Any]:
         """

@@ -7,7 +7,7 @@ import websockets
 import time
 import traceback
 from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 from ..config import config
@@ -59,7 +59,7 @@ class RealtimeService:
             # Load test case details
             test_data = evaluator_service.active_tests.get(test_id, {})
             test_case = test_data.get("test_case", {})
-
+            logger.error(f"DEBUG: testcase details: {test_case}")
             # Get persona and behavior from test case
             persona_name = test_case.get("config", {}).get("persona_name", "Unknown")
             behavior_name = test_case.get("config", {}).get("behavior_name", "Unknown")
@@ -205,12 +205,7 @@ class RealtimeService:
             raise
 
     async def start_conversation(self, call_sid: str):
-        """
-        Start the conversation with an initial greeting.
-
-        Args:
-            call_sid: Twilio call SID
-        """
+        """Start the conversation with the question."""
         if call_sid not in self.active_sessions:
             logger.error(f"No active session found for call {call_sid}")
             return
@@ -228,11 +223,32 @@ class RealtimeService:
             # Initialize turn counter
             session_data["current_turn"] = 0
 
-            # Trigger a response from OpenAI to ask the first question
+            # Send the first question as a user message
             logger.error(f"Starting conversation for call {call_sid}")
 
-            # Create a start message to get things going
+            # Create an explicit message with the question
+            await openai_ws.send(
+                json.dumps(
+                    {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": first_question
+                                    or "Hello, I need help with something.",
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+
+            # Then request a response (only send this ONCE)
             await openai_ws.send(json.dumps({"type": "response.create"}))
+            logger.error(f"Sent explicit question and response.create command")
 
             # Record the start of conversation
             from ..services.evaluator import evaluator_service
@@ -263,126 +279,292 @@ class RealtimeService:
             logger.error(f"Conversation started for call {call_sid}")
         except Exception as e:
             logger.error(f"Error starting conversation: {str(e)}")
-            logger.error(traceback.format_exc())
+
+    def get_latest_response(self, call_sid: str) -> str:
+        """Get the latest response from OpenAI."""
+        if call_sid not in self.active_sessions:
+            return ""
+
+        session_data = self.active_sessions[call_sid]
+        return session_data.get("last_response_text", "")
+
+    def should_continue_conversation(self, call_sid: str) -> bool:
+        """Check if the conversation should continue."""
+        if call_sid not in self.active_sessions:
+            return False
+
+        session_data = self.active_sessions[call_sid]
+        current_turn = session_data.get("current_turn", 0)
+        max_turns = session_data.get("max_turns", 4)
+
+        return current_turn < max_turns and not session_data.get(
+            "conversation_complete", False
+        )
 
     async def _listen_for_openai_responses(self, call_sid: str):
         """
-        Comprehensive listener for OpenAI responses with detailed error tracking.
+        Enhanced listener for OpenAI responses with improved message type handling.
         """
         logger.error(f"START: OpenAI response listener for call {call_sid}")
+
+        # Track metrics for debugging
+        start_time = datetime.now()
+        message_count = 0
+        response_text_buffer = ""
 
         try:
             # Validate session exists
             if call_sid not in self.active_sessions:
-                logger.error(f"CRITICAL: No active session found for call {call_sid}")
+                logger.error(f"No active session found for call {call_sid}")
                 return
 
             session_data = self.active_sessions[call_sid]
             openai_ws = session_data.get("openai_ws")
             test_id = session_data.get("test_id")
 
-            if not openai_ws:
-                logger.error(f"CRITICAL: No WebSocket connection for call {call_sid}")
+            if openai_ws and openai_ws.close_code:
+                logger.error(f"WebSocket not open for call {call_sid}")
                 return
 
-            # Log WebSocket connection details
-            logger.error(f"WebSocket connection status: {openai_ws.close_code is None}")
-            logger.error(f"WebSocket connection URI: {openai_ws.request.path}")
-            logger.error(f"full openai_ws {openai_ws}")
+            # Use a loop with timeout to avoid blocking indefinitely
+            max_wait_time = 60  # seconds
+            end_time = datetime.now() + timedelta(seconds=max_wait_time)
 
-            async for message in openai_ws:
+            logger.error(f"Starting message loop with {max_wait_time}s timeout")
+
+            while datetime.now() < end_time:
                 try:
-                    # Parse the response
-                    response = json.loads(message)
-                    response_type = response.get("type")
+                    # Set timeout for each message receive
+                    time_left = (end_time - datetime.now()).total_seconds()
+                    if time_left <= 0:
+                        break
 
-                    # Handle different response types
-                    if response_type == "response.complete":
-                        # Response generation is complete
-                        logger.error("Response generation complete")
+                    receive_timeout = min(5.0, time_left)
+                    message = await asyncio.wait_for(
+                        openai_ws.recv(), timeout=receive_timeout
+                    )
 
-                        # Increment turn counter
-                        session_data["current_turn"] += 1
-                        current_turn = session_data["current_turn"]
-                        max_turns = session_data.get("max_turns", 4)
+                    # Track message received
+                    message_count += 1
 
-                        logger.error(f"Completed turn {current_turn} of {max_turns}")
+                    # Parse and process the message
+                    try:
+                        response = json.loads(message)
+                        response_type = response.get("type")
 
-                        # Check if we've reached the maximum turns
-                        if current_turn >= max_turns:
-                            logger.error(
-                                f"Reached maximum turns ({max_turns}), ending conversation"
-                            )
-                            session_data["conversation_complete"] = True
-                            await self.end_conversation_and_evaluate(call_sid)
-                            break
+                        logger.error(
+                            f"Received message {message_count} of type: {response_type}"
+                        )
 
-                    elif response_type == "message.create":
-                        # Assistant message created
-                        content = response.get("content", "")
-                        logger.error(f"Assistant message: {content}")
+                        # Handle different response types
+                        if response_type == "response.complete":
+                            logger.error("Response generation complete")
 
-                        # Record the message in conversation
-                        if test_id:
-                            from ..services.evaluator import evaluator_service
-
-                            evaluator_service.record_conversation_turn(
-                                test_id=test_id,
-                                call_sid=call_sid,
-                                speaker="evaluator",  # OpenAI is acting as the evaluator
-                                text=content,
-                            )
-
-                    elif response_type == "input_audio_buffer.transcription":
-                        # Transcription of user's audio
-                        text = response.get("text", "")
-                        if text:
-                            logger.error(f"Transcription: {text}")
-
-                            # Record the agent's response
-                            if test_id:
+                            # If we've collected any text in the buffer, record it now
+                            if response_text_buffer and test_id:
                                 from ..services.evaluator import evaluator_service
 
                                 evaluator_service.record_conversation_turn(
                                     test_id=test_id,
                                     call_sid=call_sid,
-                                    speaker="agent",  # The call center agent is speaking
-                                    text=text,
+                                    speaker="evaluator",
+                                    text=response_text_buffer,
+                                )
+                                response_text_buffer = ""
+
+                            # Increment turn counter and check if max turns reached
+                            session_data["current_turn"] += 1
+                            if session_data["current_turn"] >= session_data.get(
+                                "max_turns", 4
+                            ):
+                                logger.error(
+                                    f"Reached maximum turns, ending conversation"
+                                )
+                                session_data["conversation_complete"] = True
+                                await self.end_conversation_and_evaluate(call_sid)
+                                break
+
+                        elif response_type == "message.create":
+                            content = response.get("content", "")
+                            logger.error(f"Assistant message: {content}")
+
+                            # Record the message
+                            if test_id and content:
+                                from ..services.evaluator import evaluator_service
+
+                                evaluator_service.record_conversation_turn(
+                                    test_id=test_id,
+                                    call_sid=call_sid,
+                                    speaker="evaluator",
+                                    text=content,
                                 )
 
-                    elif response_type == "error":
-                        # Error occurred
-                        logger.error(
-                            f"Full OpenAI Error Response: {json.dumps(response, indent=2)}"
-                        )
-                        error_message = response.get("message", "Unknown error")
-                        logger.error(f"OpenAI error: {error_message}")
+                        # Handle content part added (this is the text response)
+                        elif response_type == "response.content_part.added":
+                            if "content_part" in response:
+                                content_part = response["content_part"]
+                                if isinstance(content_part, str):
+                                    content = content_part
+                                else:
+                                    content = content_part.get("text", "")
 
-                        # End conversation with error
-                        session_data["error"] = error_message
-                        await self.end_conversation_and_evaluate(call_sid)
+                                if content:
+                                    logger.error(f"Content part: {content}")
+                                    response_text_buffer += content
+
+                        # Handle audio transcript (the text OpenAI is saying)
+                        elif response_type == "response.audio_transcript.delta":
+                            if "delta" in response:
+                                # Check if delta is a string or object
+                                delta = response["delta"]
+                                logger.error(
+                                    f"Delta object: {type(delta)}, Value: {delta}"
+                                )
+                                if isinstance(delta, str):
+                                    transcript = delta
+                                else:
+                                    transcript = delta.get("text", "")
+
+                                if transcript:
+                                    logger.error(f"Audio transcript: {transcript}")
+                                    response_text_buffer += transcript
+
+                        elif response_type == "input_audio_buffer.transcription":
+                            text = response.get("text", "")
+                            if text:
+                                logger.error(f"User transcription: {text}")
+
+                                # Record the agent's response
+                                if test_id:
+                                    from ..services.evaluator import evaluator_service
+
+                                    evaluator_service.record_conversation_turn(
+                                        test_id=test_id,
+                                        call_sid=call_sid,
+                                        speaker="agent",
+                                        text=text,
+                                    )
+
+                        elif response_type == "response.audio.delta":
+                            # Just log that we received audio data
+                            if "delta" in response:
+                                logger.error(f"Received audio data chunk")
+
+                        elif response_type == "response.done":
+                            logger.error("Response marked as done")
+
+                            # If we've collected any text in the buffer, record it now
+                            if response_text_buffer and test_id:
+                                from ..services.evaluator import evaluator_service
+
+                                evaluator_service.record_conversation_turn(
+                                    test_id=test_id,
+                                    call_sid=call_sid,
+                                    speaker="evaluator",
+                                    text=response_text_buffer,
+                                )
+                                response_text_buffer = ""
+
+                            # Increment turn counter
+                            session_data["current_turn"] += 1
+                            logger.error(
+                                f"Completed turn {session_data['current_turn']}"
+                            )
+
+                        elif response_type == "error":
+                            error_message = ""
+                            if "error" in response and isinstance(
+                                response["error"], dict
+                            ):
+                                error_message = response["error"].get(
+                                    "message", "Unknown error"
+                                )
+                            else:
+                                error_message = response.get("message", "Unknown error")
+
+                            logger.error(f"OpenAI error: {error_message}")
+
+                            # Record any accumulated text before ending
+                            if response_text_buffer and test_id:
+                                from ..services.evaluator import evaluator_service
+
+                                evaluator_service.record_conversation_turn(
+                                    test_id=test_id,
+                                    call_sid=call_sid,
+                                    speaker="evaluator",
+                                    text=response_text_buffer
+                                    + f" [Error: {error_message}]",
+                                )
+                                response_text_buffer = ""
+
+                            # End conversation with error
+                            session_data["error"] = error_message
+                            session_data["conversation_complete"] = True
+                            await self.end_conversation_and_evaluate(call_sid)
+                            break
+
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to parse JSON message")
+                    except Exception as msg_error:
+                        logger.error(f"Error processing message: {str(msg_error)}")
+
+                except asyncio.TimeoutError:
+                    # Check if we've collected any text to record
+                    if response_text_buffer and test_id:
+                        logger.error(
+                            f"Recording accumulated transcript: {response_text_buffer}"
+                        )
+                        from ..services.evaluator import evaluator_service
+
+                        evaluator_service.record_conversation_turn(
+                            test_id=test_id,
+                            call_sid=call_sid,
+                            speaker="evaluator",
+                            text=response_text_buffer,
+                        )
+                        response_text_buffer = ""
+
+                    # Check if we've been waiting too long
+                    seconds_since_start = (datetime.now() - start_time).total_seconds()
+                    if seconds_since_start > 15 and message_count > 10:
+                        logger.error(
+                            "No messages for 15+ seconds, assuming conversation is complete"
+                        )
                         break
 
-                except json.JSONDecodeError:
-                    logger.error(f"Failed to parse JSON message: {message}")
-                except Exception as msg_error:
-                    logger.error(f"Error processing message: {str(msg_error)}")
-                    logger.error(traceback.format_exc())
+                except Exception as loop_error:
+                    logger.error(f"Error in message loop: {str(loop_error)}")
+                    break
 
-        except Exception as comprehensive_error:
+            # Process any remaining text in buffer
+            if response_text_buffer and test_id:
+                logger.error(f"Recording final transcript: {response_text_buffer}")
+                from ..services.evaluator import evaluator_service
+
+                evaluator_service.record_conversation_turn(
+                    test_id=test_id,
+                    call_sid=call_sid,
+                    speaker="evaluator",
+                    text=response_text_buffer,
+                )
+
+            # Log summary before exiting
+            duration = (datetime.now() - start_time).total_seconds()
             logger.error(
-                f"FATAL OpenAI Listener Error for {call_sid}: {str(comprehensive_error)}"
+                f"OpenAI listener ending after {duration:.1f}s with {message_count} messages"
             )
+
+        except Exception as e:
+            logger.error(f"Fatal error in OpenAI listener: {str(e)}")
+            import traceback
+
             logger.error(traceback.format_exc())
 
-            # Try to end conversation gracefully
-            try:
-                await self.end_conversation_and_evaluate(call_sid)
-            except:
-                pass
-
         finally:
-            logger.error(f"END: OpenAI response listener for call {call_sid}")
+            duration = (datetime.now() - start_time).total_seconds()
+            logger.error(
+                f"END: OpenAI response listener for call {call_sid} - Duration: {duration:.1f}s, Messages: {message_count}"
+            )
 
     async def send_message(self, call_sid: str, message: str):
         """

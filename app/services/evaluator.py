@@ -486,10 +486,17 @@ class EvaluatorService:
         test_case = TestCase(**test_data["test_case"])
         call_sid = test_data.get("call_sid", "unknown")
 
+        end_time = test_data.get("end_time", time.time())
+        if isinstance(end_time, datetime):
+            end_time = end_time.timestamp()  # Convert to float
+
+        # Convert start_time to a timestamp
+        start_time = test_data.get("start_time", time.time())
+        if isinstance(start_time, datetime):
+            start_time = start_time.timestamp()  # Convert to float
+
         # Calculate execution time
-        execution_time = test_data.get("end_time", time.time()) - test_data.get(
-            "start_time", time.time()
-        )
+        execution_time = end_time - start_time
 
         # Create conversation turns
         conversation_turns = []
