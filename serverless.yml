@@ -96,7 +96,7 @@ functions:
   api:
     handler: lambda_function.lambda_handler
     layers:
-      - arn:aws:lambda:us-east-2:753488050735:layer:ai-call-center-evaluator-dev-python-requirements:7
+      - arn:aws:lambda:us-east-2:753488050735:layer:ai-call-center-evaluator-dev-python-requirements:12
     package:
       patterns:
         - lambda_function.py 

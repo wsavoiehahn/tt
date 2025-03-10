@@ -21,7 +21,6 @@ class DynamoDBService:
         """Ensure the DynamoDB table exists, create it if it doesn't."""
         try:
             self.dynamodb.meta.client.describe_table(TableName=self.table_name)
-            logger.error(f"DEBUG: DynamoDB table {self.table_name} already exists")
         except ClientError as e:
             if e.response["Error"]["Code"] == "ResourceNotFoundException":
                 # Create the table
