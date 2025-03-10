@@ -66,7 +66,7 @@ class RealtimeService:
                 openai_ws = await asyncio.wait_for(
                     websockets.connect(
                         f"{self.realtime_url}?model={self.realtime_model}",
-                        extra_headers={
+                        additional_headers={
                             "Authorization": f"Bearer {self.api_key}",
                             "OpenAI-Beta": "realtime=v1",
                             "Content-Type": "application/json",
@@ -77,7 +77,7 @@ class RealtimeService:
                     timeout=45,
                 )
                 logger.error(f"WebSocket connection established successfully")
-                logger.error(f"WebSocket URI: {openai_ws.uri}")
+                logger.error(f"WebSocket URI: {openai_ws.request.path}")
             except Exception as conn_error:
                 logger.error(
                     f"CRITICAL WebSocket Connection Failure: {str(conn_error)}"
@@ -205,7 +205,7 @@ class RealtimeService:
 
             # Log WebSocket connection details
             logger.error(f"WebSocket connection status: {openai_ws.open}")
-            logger.error(f"WebSocket connection URI: {openai_ws.uri}")
+            logger.error(f"WebSocket connection URI: {openai_ws.request.path}")
 
             async for message in openai_ws:
                 try:
@@ -311,7 +311,7 @@ class RealtimeService:
         """
         if call_sid in self.active_sessions:
             openai_ws = self.active_sessions[call_sid].get("openai_ws")
-            if openai_ws and openai_ws.open:
+            if openai_ws and not openai_ws.close_code:
                 try:
                     await openai_ws.close()
                     logger.info(f"Closed OpenAI WebSocket for call {call_sid}")

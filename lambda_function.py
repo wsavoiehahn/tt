@@ -63,8 +63,8 @@ def lambda_handler(event, context):
     """AWS Lambda handler that supports both WebSockets and HTTP API requests"""
     try:
         # Enhanced logging for debugging
-        logger.error(f"Event type: {type(event)}")
-        logger.error(f"Event content: {json.dumps(event, default=str)}")
+        # logger.error(f"Event type: {type(event)}")
+        # logger.error(f"Event content: {json.dumps(event, default=str)}")
 
         # Extract request details
         request_context = event.get("requestContext", {})

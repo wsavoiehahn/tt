@@ -41,7 +41,7 @@ async def remove_connection(connection_id: str):
         openai_ws = connection.get("openai_ws")
 
         # Close OpenAI WebSocket if it exists
-        if openai_ws and not openai_ws.closed:
+        if openai_ws and not openai_ws.close_code:
             try:
                 await openai_ws.close()
                 logger.error(f"Closed OpenAI WebSocket for connection: {connection_id}")
@@ -72,7 +72,7 @@ async def connect_to_openai(test_id: str) -> websockets.WebSocketClientProtocol:
         logger.error("Connecting to OpenAI realtime API")
         openai_ws = await websockets.connect(
             "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
-            extra_headers={
+            additional_headers={
                 "Authorization": f"Bearer {OPENAI_API_KEY}",
                 "OpenAI-Beta": "realtime=v1",
             },

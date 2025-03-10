@@ -11,7 +11,7 @@ botocore
 twilio
 
 openai
-websockets==11.0.3
+websockets
 
 python-dotenv
 aiohttp

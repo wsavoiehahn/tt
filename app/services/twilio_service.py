@@ -283,46 +283,6 @@ class TwilioService:
             )
             return default_number
 
-    def generate_stream_twiml(self, test_id: str, call_sid: str) -> str:
-        """
-        Generate TwiML for connecting to a media stream.
-        """
-        # Get REST callback URL from config
-        callback_url = config.get_parameter("/ai-evaluator/twilio_callback_url")
-        if not callback_url:
-            callback_url = "https://5apclmbos2.execute-api.us-east-2.amazonaws.com"
-
-        # Get WebSocket URL from config
-        websocket_url = config.get_parameter("/ai-evaluator/websocket_endpoint")
-        if not websocket_url:
-            websocket_url = "wss://15cv5bu809.execute-api.us-east-2.amazonaws.com/dev"
-
-        # Create VoiceResponse object
-        response = VoiceResponse()
-
-        # Add initial message
-        response.say("Starting evaluation call.")
-
-        # Create media stream URL using WebSocket endpoint
-        stream_url = f"{websocket_url}"
-
-        # Add query parameters
-        stream_url += f"?test_id={test_id}&call_sid={call_sid}"
-
-        logger.error(f"DEBUG: Using WebSocket URL: {stream_url}")
-
-        # Create Connect and Stream objects
-        connect = Connect()
-        stream = Stream(url=stream_url)
-
-        # Add Stream to Connect and Connect to response
-        connect.append(stream)
-        response.append(connect)
-
-        logger.error(f"DEBUG: Generated TwiML: {str(response)}")
-
-        return str(response)
-
     def get_outbound_number(self) -> str:
         """Get an available Twilio number for outbound calling."""
         try:

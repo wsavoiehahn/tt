@@ -78,7 +78,7 @@ class OpenAIService:
 
         async with websockets.connect(
             f"{self.realtime_url}?model={self.realtime_model}",
-            extra_headers=self.headers,
+            additional_headers=self.headers,
         ) as websocket:
             # Send initial system message
             await websocket.send(
@@ -365,7 +365,7 @@ class OpenAIService:
             # Verify this is actually an MP3 (should start with ID3 or with MP3 sync word 0xFF 0xFB)
             if not (
                 response.content.startswith(b"ID3")
-                or (len(response.content) > 2 and response.content[:2] == b"\xFF\xFB")
+                or (len(response.content) > 2 and response.content[:2] == b"\xff\xfb")
             ):
                 logger.error(
                     f"TTS WARNING: Response does not appear to be valid MP3 data. First 10 bytes: {response.content[:10].hex()}"
