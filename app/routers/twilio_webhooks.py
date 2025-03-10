@@ -1,4 +1,4 @@
-# app/routers/twilio_webhooks.py
+# app/routers/twilio_webhooks.py (complete updated version)
 import logging
 import asyncio
 import json
@@ -52,14 +52,6 @@ def get_test_id_from_request(
 ) -> str:
     """
     Extract test_id from various sources to avoid code duplication.
-
-    Args:
-        request: The FastAPI request object
-        form_data: Form data from the request
-        call_sid: Optional call SID to check in active calls
-
-    Returns:
-        The extracted test_id or None if not found
     """
     # First try query params
     test_id = request.query_params.get("test_id")
@@ -156,15 +148,13 @@ async def call_started(request: Request):
         # Get test case data
         test_case = evaluator_service.active_tests[test_id].get("test_case", {})
 
-        # Get WebSocket URL from config or use default
-        websocket_url = config.get_parameter("/ai-evaluator/websocket_endpoint", False)
-        if not websocket_url:
-            # Use API Gateway WebSocket URL
-            domain_name = request.headers.get("host", "")
-            stage = "dev"  # or get from environment
-            websocket_url = f"wss://{domain_name}/{stage}"
+        # Get WebSocket URL from the current request
+        host = request.headers.get("host", request.url.hostname)
+        protocol = "wss" if request.url.scheme == "https" else "ws"
 
-        logger.error(f"Using WebSocket URL: {websocket_url}")
+        # Create WebSocket URL using the host from the current request
+        websocket_url = f"{protocol}://{host}/media-stream"
+        logger.info(f"Using WebSocket URL: {websocket_url}")
 
         # Create TwiML
         response = VoiceResponse()
@@ -208,27 +198,31 @@ async def call_status(request: Request, background_tasks: BackgroundTasks):
     Handle call status webhook from Twilio.
     This webhook is called when a call status changes.
     """
-    form_data = await request.form()
-    logger.info(f"Call status webhook received - Form data: {dict(form_data)}")
+    try:
+        form_data = await request.form()
+        logger.info(f"Call status webhook received - Form data: {dict(form_data)}")
 
-    call_sid = form_data.get("CallSid")
-    call_status = form_data.get("CallStatus")
-    test_id = get_test_id_from_request(request, form_data, call_sid)
+        call_sid = form_data.get("CallSid")
+        call_status = form_data.get("CallStatus")
+        test_id = get_test_id_from_request(request, form_data, call_sid)
 
-    logger.info(
-        f"Call status update - SID: {call_sid}, status: {call_status}, test_id: {test_id}"
-    )
+        logger.info(
+            f"Call status update - SID: {call_sid}, status: {call_status}, test_id: {test_id}"
+        )
 
-    # If call is completed or failed, process the test
-    if call_status in ["completed", "failed", "busy", "no-answer", "canceled"]:
-        if test_id:
-            # Run in background to avoid blocking
-            background_tasks.add_task(
-                process_completed_call, test_id, call_sid, call_status
-            )
+        # If call is completed or failed, process the test
+        if call_status in ["completed", "failed", "busy", "no-answer", "canceled"]:
+            if test_id:
+                # Run in background to avoid blocking
+                background_tasks.add_task(
+                    process_completed_call, test_id, call_sid, call_status
+                )
 
-    # Return a success response
-    return JSONResponse(content={"status": "received"})
+        # Return a success response
+        return JSONResponse(content={"status": "received"})
+    except Exception as e:
+        logger.error(f"Error handling call status webhook: {str(e)}")
+        return JSONResponse(content={"status": "error", "message": str(e)})
 
 
 async def process_completed_call(test_id: str, call_sid: str, call_status: str):
@@ -441,7 +435,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         # Try to send error if connection is still open
         try:
             await websocket.send_json({"type": "error", "message": str(e)})
-        except:
+        except Exception:
             pass
 
         # Remove from active websockets

@@ -1,14 +1,14 @@
-# lambda_function.py
+# lambda_function.py (updated version)
 import logging
 import os
 import traceback
 import json
 from pathlib import Path
 from mangum import Mangum
-
-
-# Import FastAPI app
-from app_func import app
+from fastapi import FastAPI, WebSocket, Request, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
+from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
+from app.services.evaluator import evaluator_service
 
 # Configure logging
 logging.basicConfig(
@@ -16,26 +16,163 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Capture and log any import errors
+# Import main FastAPI app if available
 try:
     from app.main import app
+
+    logger.info("Successfully imported app from app.main")
 except Exception as e:
     logger.error("Failed to import app from app.main")
     logger.error(f"Error: {e}")
     logger.error(traceback.format_exc())
-    raise
+
+    # Create a new app if import failed
+    app = FastAPI()
+    logger.info("Created new FastAPI app as fallback")
+
+# Import custom WebSocket handlers
+try:
+    from app.websocket_handlers import handle_media_stream
+
+    logger.info("Successfully imported WebSocket handlers")
+except Exception as e:
+    logger.error("Failed to import WebSocket handlers")
+    logger.error(f"Error: {e}")
+    logger.error(traceback.format_exc())
+
+
+# Add WebSocket endpoint for media streaming
+@app.websocket("/media-stream")
+async def media_stream(websocket: WebSocket):
+    """WebSocket endpoint for media streaming between Twilio and OpenAI"""
+    await handle_media_stream(websocket)
+
+
+@app.api_route("/webhooks/call-started", methods=["GET", "POST"])
+async def handle_call_started(request: Request):
+    """Handle call started webhook from Twilio."""
+    form_data = await request.form()
+    call_sid = form_data.get("CallSid")
+    test_id = request.query_params.get("test_id")
+
+    logger.error(f"Call started - SID: {call_sid}, Test ID: {test_id}")
+
+    # Create TwiML response
+    response = VoiceResponse()
+
+    if test_id and test_id in evaluator_service.active_tests:
+        # Real test found - create proper response
+        response.say("Starting real-time AI evaluation call.")
+        response.pause(length=1)
+
+        # Create Connect and Stream elements
+        connect = Connect()
+
+        # Determine the WebSocket URL
+        host = request.headers.get("host", request.url.hostname)
+        protocol = "wss"  # Always use secure WebSockets in production
+        stream_url = (
+            f"{protocol}://{host}/media-stream?test_id={test_id}&call_sid={call_sid}"
+        )
+
+        logger.error(f"Using WebSocket URL: {stream_url}")
+
+        # Create Stream properly
+        stream = Stream(name="media_stream", url=stream_url)
+
+        # Add parameters
+        stream.parameter(name="format", value="audio")
+        stream.parameter(name="rate", value="8000")
+
+        # Add stream to connect
+        connect.append(stream)
+
+        # Add connect to response
+        response.append(connect)
+    else:
+        # Test not found - return simple response
+        response.say("Starting simplified evaluation call.")
+        response.pause(length=1)
+        response.say(f"No test found with the provided ID: {test_id}")
+        response.pause(length=2)
+        response.say("Thank you for your time. This concludes our test.")
+
+    return HTMLResponse(content=str(response), media_type="application/xml")
+
+
+# Add a simple root endpoint
+@app.get("/", response_class=JSONResponse)
+async def index_page():
+    """Root endpoint showing API status"""
+    return {"message": "AI Call Center Evaluator API is running", "status": "healthy"}
+
 
 # Create Mangum handler for Lambda
 handler = Mangum(app)
 
 
 def lambda_handler(event, context):
-    logger.info("Lambda handler called with event: %s", json.dumps(event))
+    """AWS Lambda handler that supports both WebSockets and HTTP API requests"""
     try:
-        return handler(event, context)
+        # Enhanced logging for debugging
+        logger.error(f"Event type: {type(event)}")
+        logger.error(f"Event content: {json.dumps(event, default=str)}")
+
+        # Extract request details
+        request_context = event.get("requestContext", {})
+        event_type = request_context.get("eventType")
+        route_key = request_context.get("routeKey")
+        connection_id = request_context.get("connectionId")
+        domain_name = request_context.get("domainName")
+        stage = request_context.get("stage")
+
+        logger.error(f"Event type: {event_type}, Route key: {route_key}")
+        logger.error(
+            f"Connection ID: {connection_id}, Domain: {domain_name}, Stage: {stage}"
+        )
+
+        # Extract query parameters if any
+        query_params = event.get("queryStringParameters", {}) or {}
+        logger.error(f"Query parameters: {query_params}")
+
+        # Handle WebSocket connections
+        if event_type == "CONNECT":
+            logger.error("WebSocket CONNECT event received")
+            # Accept all connections for now for testing
+            return {"statusCode": 200, "body": "WebSocket connected"}
+
+        elif event_type == "DISCONNECT":
+            logger.error("WebSocket DISCONNECT event received")
+            return {"statusCode": 200, "body": "WebSocket disconnected"}
+
+        elif event_type == "MESSAGE":
+            logger.error(f"WebSocket MESSAGE event received")
+            message_body = event.get("body", "{}")
+            logger.error(f"Message body: {message_body}")
+            return {"statusCode": 200, "body": "Message received"}
+
+        # Route-specific handlers
+        elif route_key == "$default" and "media-stream" in event.get(
+            "requestContext", {}
+        ).get("resourcePath", ""):
+            logger.error(
+                "Handling media-stream WebSocket connection via $default route"
+            )
+            # Accept all media-stream connections for now for testing
+            return {"statusCode": 200, "body": "Media stream connected"}
+
+        elif route_key == "media-stream" or route_key == "$connect/media-stream":
+            logger.error("Handling explicit media-stream WebSocket connection")
+            # Accept all media-stream connections for now for testing
+            return {"statusCode": 200, "body": "Media stream connected"}
+
+        # Handle HTTP requests using Mangum (FastAPI)
+        else:
+            logger.error(f"Handling HTTP request with route: {route_key}")
+            return handler(event, context)
+
     except Exception as e:
-        logger.error("Unhandled exception in Lambda handler")
-        logger.error(f"Error: {e}")
+        logger.error(f"Unhandled exception in Lambda handler: {str(e)}")
         logger.error(traceback.format_exc())
         return {
             "statusCode": 500,
@@ -45,7 +182,8 @@ def lambda_handler(event, context):
 
 # Add static files directory and templates if not exists
 def setup_directories():
-    # Create static directory if it doesn't exist
+    """Create necessary directories for static files and templates"""
+    # Create static directory
     static_dir = Path("static")
     static_dir.mkdir(exist_ok=True)
 
@@ -55,23 +193,9 @@ def setup_directories():
     static_js_dir = static_dir / "js"
     static_js_dir.mkdir(exist_ok=True)
 
-    # Create templates directory if it doesn't exist
+    # Create templates directory
     templates_dir = Path("templates")
     templates_dir.mkdir(exist_ok=True)
-
-    # Create default dashboard template if it doesn't exist
-    dashboard_template = templates_dir / "dashboard.html"
-    if not dashboard_template.exists():
-        with open("app/templates/dashboard.html", "r") as src:
-            with open(dashboard_template, "w") as dst:
-                dst.write(src.read())
-
-    # Create default report details template if it doesn't exist
-    report_template = templates_dir / "report_details.html"
-    if not report_template.exists():
-        with open("app/templates/report_details.html", "r") as src:
-            with open(report_template, "w") as dst:
-                dst.write(src.read())
 
 
 # Setup directories when running in Lambda
