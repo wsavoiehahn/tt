@@ -288,6 +288,7 @@ class RealtimeService:
             # Log WebSocket connection details
             logger.error(f"WebSocket connection status: {openai_ws.close_code is None}")
             logger.error(f"WebSocket connection URI: {openai_ws.request.path}")
+            logger.error(f"full openai_ws {openai_ws}")
 
             async for message in openai_ws:
                 try:

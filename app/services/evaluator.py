@@ -141,7 +141,6 @@ class EvaluatorService:
         # Make sure we're explicitly saving everything needed by the call initiation process
         try:
             dynamodb_service.save_test(test_id, self.active_tests[test_id])
-            logger.error(f"DEBUG: Test {test_id} saved to DynamoDB")
         except Exception as ddb_error:
             logger.error(f"DEBUG: Error saving to DynamoDB: {str(ddb_error)}")
             import traceback
@@ -223,7 +222,6 @@ class EvaluatorService:
 
                 # Save the full test data again to DynamoDB
                 dynamodb_service.save_test(test_id, self.active_tests[test_id])
-                logger.error(f"DEBUG: Saved full test data to DynamoDB")
             except Exception as ddb_error:
                 logger.error(f"DEBUG: Error updating DynamoDB: {str(ddb_error)}")
 

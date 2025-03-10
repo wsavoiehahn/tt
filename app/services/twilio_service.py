@@ -86,17 +86,6 @@ class TwilioService:
                 callback_url = config.get_parameter(
                     "/ai-evaluator/twilio_callback_url", False
                 )
-                if callback_url:
-                    self.callback_url = callback_url
-                    logger.error(f"DEBUG: Updated callback URL to: {callback_url}")
-                else:
-                    # For testing purposes, use the API Gateway URL
-                    callback_url = (
-                        "https://5apclmbos2.execute-api.us-east-2.amazonaws.com"
-                    )
-                    logger.error(
-                        f"DEBUG: No callback URL found, using API Gateway URL: {callback_url}"
-                    )
 
             logger.error(f"DEBUG: Using callback URL: {callback_url}")
 
@@ -171,8 +160,8 @@ class TwilioService:
                     if len(self.auth_token) > 6
                     else "***"
                 )
-                logger.error(
-                    f"DEBUG: Using Twilio account: {account_sid_masked}, auth: {auth_token_masked}"
+                logger.debug(
+                    f"Using Twilio account: {account_sid_masked}, auth: {auth_token_masked}"
                 )
 
                 # Create the call with all parameters
@@ -242,7 +231,6 @@ class TwilioService:
                 dynamodb_service.save_test(
                     test_id, evaluator_service.active_tests[test_id]
                 )
-                logger.error(f"DEBUG: Updated test with call SID in DynamoDB")
             except Exception as update_error:
                 logger.error(
                     f"DEBUG: Error updating test with call SID: {str(update_error)}"

@@ -57,7 +57,7 @@ class DynamoDBService:
             True if successful, False otherwise
         """
         try:
-            logger.error(f"DEBUG: Saving test {test_id} to DynamoDB")
+            logger.debug(f"DEBUG: Saving test {test_id} to DynamoDB")
 
             # Convert any non-serializable objects to strings
             test_data_json = json.dumps(test_data, default=str)
@@ -71,7 +71,7 @@ class DynamoDBService:
                     "status": test_data.get("status", "unknown"),
                 }
             )
-            logger.error(f"DEBUG: Test {test_id} saved to DynamoDB")
+            logger.info(f"DEBUG: Test {test_id} saved to DynamoDB")
             return True
         except Exception as e:
             logger.error(f"DEBUG: Error saving test to DynamoDB: {str(e)}")
@@ -118,9 +118,7 @@ class DynamoDBService:
             True if successful, False otherwise
         """
         try:
-            logger.error(
-                f"DEBUG: Updating test {test_id} status to {status} in DynamoDB"
-            )
+            logger.debug(f"Updating test {test_id} status to {status} in DynamoDB")
             response = self.table.update_item(
                 Key={"test_id": test_id},
                 UpdateExpression="set #status = :status",
