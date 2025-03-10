@@ -109,7 +109,7 @@ class RealtimeService:
 
             # Create system message
             system_message = self._create_system_prompt(
-                persona, behavior, knowledge_base
+                persona, behavior, first_question, knowledge_base
             )
 
             # Detailed session configuration
@@ -357,6 +357,7 @@ class RealtimeService:
         self,
         persona: Persona,
         behavior: Behavior,
+        question: str,
         knowledge_base: Dict[str, Any],
     ) -> str:
         """
@@ -370,6 +371,7 @@ class RealtimeService:
         Returns:
             Comprehensive system prompt string
         """
+        logger.info(persona)
         persona_traits = ", ".join(persona.traits)
         behavior_chars = ", ".join(behavior.characteristics)
 
@@ -395,6 +397,9 @@ class RealtimeService:
 
         Customer Behavior: {behavior.name}
         Behavior Characteristics: {behavior_chars}
+
+        You are calling an AI customer service agent.
+        You need to ask about the following question: "{question}"
 
         Interaction Guidelines:
         - Be conversational and natural
