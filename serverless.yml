@@ -25,7 +25,7 @@ provider:
   region: ${opt:region, 'us-east-2'}
   stage: ${opt:stage, 'dev'}
   memorySize: 512
-  timeout: 180  # Increased timeout for WebSocket connections
+  timeout: 300  # Increased timeout for WebSocket connections
   logRetentionInDays: 30
   environment:
     STAGE: ${self:provider.stage}

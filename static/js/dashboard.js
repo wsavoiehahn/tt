@@ -1,24 +1,16 @@
 // static/js/dashboard.js
 
-// Sample data for initial rendering - this would be replaced with actual API data
-const sampleData = {
+// Global variables to store report data
+let allReports = [];
+let aggregatedMetrics = {
     overallMetrics: {
-        accuracy: 0.86,
-        empathy: 0.79,
-        responseTime: 2.4,
-        successRate: 0.92
+        accuracy: 0,
+        empathy: 0,
+        responseTime: 0,
+        successRate: 0
     },
-    byPersona: {
-        "Tech-Savvy": { accuracy: 0.90, empathy: 0.75 },
-        "Non-Native Speaker": { accuracy: 0.82, empathy: 0.85 },
-        "First Time Customer": { accuracy: 0.88, empathy: 0.80 },
-        "Accidental Customer": { accuracy: 0.84, empathy: 0.76 }
-    },
-    byBehavior: {
-        "frustrated": { accuracy: 0.81, empathy: 0.77 },
-        "confused": { accuracy: 0.89, empathy: 0.83 },
-        "urgent": { accuracy: 0.88, empathy: 0.76 }
-    }
+    byPersona: {},
+    byBehavior: {}
 };
 
 // Chart objects
@@ -27,13 +19,12 @@ let behaviorChart = null;
 
 // Initialize the dashboard
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize charts
+    // Initialize charts with empty data initially
     initializeCharts();
     
     // Fetch initial data
     fetchReports();
     fetchPersonasAndBehaviors();
-    fetchAggregateData();
     
     // Add event listeners for buttons
     setupEventListeners();
@@ -45,16 +36,16 @@ function initializeCharts() {
     personaChart = new Chart(personaCtx, {
         type: 'bar',
         data: {
-            labels: Object.keys(sampleData.byPersona),
+            labels: [],
             datasets: [
                 {
                     label: 'Accuracy',
-                    data: Object.values(sampleData.byPersona).map(p => p.accuracy * 100),
+                    data: [],
                     backgroundColor: 'rgba(54, 162, 235, 0.7)'
                 },
                 {
                     label: 'Empathy',
-                    data: Object.values(sampleData.byPersona).map(p => p.empathy * 100),
+                    data: [],
                     backgroundColor: 'rgba(75, 192, 192, 0.7)'
                 }
             ]
@@ -79,16 +70,16 @@ function initializeCharts() {
     behaviorChart = new Chart(behaviorCtx, {
         type: 'bar',
         data: {
-            labels: Object.keys(sampleData.byBehavior),
+            labels: [],
             datasets: [
                 {
                     label: 'Accuracy',
-                    data: Object.values(sampleData.byBehavior).map(b => b.accuracy * 100),
+                    data: [],
                     backgroundColor: 'rgba(54, 162, 235, 0.7)'
                 },
                 {
                     label: 'Empathy',
-                    data: Object.values(sampleData.byBehavior).map(b => b.empathy * 100),
+                    data: [],
                     backgroundColor: 'rgba(75, 192, 192, 0.7)'
                 }
             ]
@@ -108,9 +99,6 @@ function initializeCharts() {
             }
         }
     });
-
-    // Update initial metrics display
-    updateMetricsDisplay(sampleData.overallMetrics);
 }
 
 // Update the metrics display with new data
@@ -119,6 +107,126 @@ function updateMetricsDisplay(metrics) {
     document.getElementById('overallEmpathy').textContent = `${Math.round(metrics.empathy * 100)}%`;
     document.getElementById('avgResponseTime').textContent = `${metrics.responseTime.toFixed(1)}s`;
     document.getElementById('successRate').textContent = `${Math.round(metrics.successRate * 100)}%`;
+}
+
+// Calculate aggregated metrics from all reports
+function calculateAggregatedMetrics(reports) {
+    // Initialize metrics objects
+    let metrics = {
+        overallMetrics: {
+            accuracy: 0,
+            empathy: 0,
+            responseTime: 0,
+            successRate: 0,
+            totalReports: 0,
+            successfulReports: 0
+        },
+        byPersona: {},
+        byBehavior: {}
+    };
+    
+    // Skip if no reports
+    if (!reports || reports.length === 0) {
+        return metrics;
+    }
+    
+    // Process each report
+    reports.forEach(report => {
+        // Get actual report data, either from data property or directly
+        const reportData = report.data || report;
+        
+        // Extract metrics
+        const overallMetrics = reportData.overall_metrics || {};
+        
+        // Extract persona and behavior
+        const personaName = 
+            reportData.persona_name || 
+            reportData.test_case?.config?.persona_name || 
+            reportData.config?.persona_name || 
+            'Unknown';
+        
+        const behaviorName = 
+            reportData.behavior_name || 
+            reportData.test_case?.config?.behavior_name || 
+            reportData.config?.behavior_name || 
+            'Unknown';
+        
+        // Only include reports with valid metrics
+        if (overallMetrics && typeof overallMetrics.accuracy === 'number') {
+            // Count total reports
+            metrics.overallMetrics.totalReports++;
+            
+            // Check if successful (no error message)
+            const isSuccessful = overallMetrics.successful !== false;
+            if (isSuccessful) {
+                metrics.overallMetrics.successfulReports++;
+                
+                // Add to overall totals
+                metrics.overallMetrics.accuracy += overallMetrics.accuracy || 0;
+                metrics.overallMetrics.empathy += overallMetrics.empathy || 0;
+                metrics.overallMetrics.responseTime += overallMetrics.response_time || 0;
+                
+                // Initialize persona metrics if not exists
+                if (!metrics.byPersona[personaName]) {
+                    metrics.byPersona[personaName] = {
+                        accuracy: 0,
+                        empathy: 0,
+                        count: 0
+                    };
+                }
+                
+                // Add to persona metrics
+                metrics.byPersona[personaName].accuracy += overallMetrics.accuracy || 0;
+                metrics.byPersona[personaName].empathy += overallMetrics.empathy || 0;
+                metrics.byPersona[personaName].count++;
+                
+                // Initialize behavior metrics if not exists
+                if (!metrics.byBehavior[behaviorName]) {
+                    metrics.byBehavior[behaviorName] = {
+                        accuracy: 0,
+                        empathy: 0,
+                        count: 0
+                    };
+                }
+                
+                // Add to behavior metrics
+                metrics.byBehavior[behaviorName].accuracy += overallMetrics.accuracy || 0;
+                metrics.byBehavior[behaviorName].empathy += overallMetrics.empathy || 0;
+                metrics.byBehavior[behaviorName].count++;
+            }
+        }
+    });
+    
+    // Calculate averages for overall metrics
+    if (metrics.overallMetrics.successfulReports > 0) {
+        metrics.overallMetrics.accuracy /= metrics.overallMetrics.successfulReports;
+        metrics.overallMetrics.empathy /= metrics.overallMetrics.successfulReports;
+        metrics.overallMetrics.responseTime /= metrics.overallMetrics.successfulReports;
+    }
+    
+    // Calculate success rate
+    metrics.overallMetrics.successRate = 
+        metrics.overallMetrics.totalReports > 0 
+            ? metrics.overallMetrics.successfulReports / metrics.overallMetrics.totalReports 
+            : 0;
+    
+    // Calculate averages for persona metrics
+    for (const persona in metrics.byPersona) {
+        if (metrics.byPersona[persona].count > 0) {
+            metrics.byPersona[persona].accuracy /= metrics.byPersona[persona].count;
+            metrics.byPersona[persona].empathy /= metrics.byPersona[persona].count;
+        }
+    }
+    
+    // Calculate averages for behavior metrics
+    for (const behavior in metrics.byBehavior) {
+        if (metrics.byBehavior[behavior].count > 0) {
+            metrics.byBehavior[behavior].accuracy /= metrics.byBehavior[behavior].count;
+            metrics.byBehavior[behavior].empathy /= metrics.byBehavior[behavior].count;
+        }
+    }
+    
+    return metrics;
 }
 
 // Fetch reports from the API
@@ -138,6 +246,24 @@ async function fetchReports() {
                 return report.report_id && 
                        (report.data || report.test_case_name || report.name);
             });
+            
+            // Store reports globally
+            allReports = reports;
+            
+            // Calculate aggregated metrics
+            aggregatedMetrics = calculateAggregatedMetrics(reports);
+            
+            // Update UI with metrics
+            updateMetricsDisplay({
+                accuracy: aggregatedMetrics.overallMetrics.accuracy,
+                empathy: aggregatedMetrics.overallMetrics.empathy,
+                responseTime: aggregatedMetrics.overallMetrics.responseTime,
+                successRate: aggregatedMetrics.overallMetrics.successRate
+            });
+            
+            // Update charts
+            updatePersonaChart(aggregatedMetrics.byPersona);
+            updateBehaviorChart(aggregatedMetrics.byBehavior);
         } else {
             console.error('Error fetching reports:', response.statusText);
         }
@@ -231,23 +357,48 @@ function displayReports(reports) {
     
     document.getElementById('loadingReports').style.display = 'none';
 }
+
 // Fetch personas and behaviors
 async function fetchPersonasAndBehaviors() {
     try {
-        // In a real implementation, this would fetch from an API endpoint
-        // For now, we'll use hardcoded values based on the provided JSON
-        const personas = [
-            { name: "Tech-Savvy", traits: ["knowledgeable", "efficient", "solution-oriented", "independent", "precise"] },
-            { name: "Non-Native Speaker", traits: ["careful with language", "may need clarification", "persistent", "apologetic", "attentive"] },
-            { name: "First Time Customer", traits: ["uncertain", "inquisitive", "careful", "detail-seeking", "needs reassurance"] },
-            { name: "Accidental Customer", traits: ["confused", "potentially frustrated", "uncertain", "wanting clarification", "may be embarrassed"] }
-        ];
+        // Try to fetch from API first
+        let personas = [];
+        let behaviors = [];
         
-        const behaviors = [
-            { name: "frustrated", characteristics: ["shows impatience", "may use stronger language", "emphasizes urgency", "references previous attempts", "seeks immediate resolution"] },
-            { name: "confused", characteristics: ["asks for clarification", "may repeat questions", "expresses uncertainty", "seeks confirmation", "may misunderstand instructions"] },
-            { name: "urgent", characteristics: ["emphasizes time sensitivity", "seeks immediate solutions", "may interrupt", "focused on quick resolution", "may express consequences of delay"] }
-        ];
+        try {
+            // This endpoint might not exist, so we'll catch any errors
+            const response = await fetch('/api/system-info');
+            if (response.ok) {
+                const systemInfo = await response.json();
+                // Check if we can load personas and behaviors
+                if (systemInfo.personas) {
+                    personas = systemInfo.personas;
+                }
+                if (systemInfo.behaviors) {
+                    behaviors = systemInfo.behaviors;
+                }
+            }
+        } catch (error) {
+            console.log('Could not fetch from API, using hardcoded values');
+        }
+        
+        // Fall back to hardcoded values if API doesn't return data
+        if (personas.length === 0) {
+            personas = [
+                { name: "Tech-Savvy", traits: ["knowledgeable", "efficient", "solution-oriented", "independent", "precise"] },
+                { name: "Non-Native Speaker", traits: ["careful with language", "may need clarification", "persistent", "apologetic", "attentive"] },
+                { name: "First Time Customer", traits: ["uncertain", "inquisitive", "careful", "detail-seeking", "needs reassurance"] },
+                { name: "Accidental Customer", traits: ["confused", "potentially frustrated", "uncertain", "wanting clarification", "may be embarrassed"] }
+            ];
+        }
+        
+        if (behaviors.length === 0) {
+            behaviors = [
+                { name: "frustrated", characteristics: ["shows impatience", "may use stronger language", "emphasizes urgency", "references previous attempts", "seeks immediate resolution"] },
+                { name: "confused", characteristics: ["asks for clarification", "may repeat questions", "expresses uncertainty", "seeks confirmation", "may misunderstand instructions"] },
+                { name: "urgent", characteristics: ["emphasizes time sensitivity", "seeks immediate solutions", "may interrupt", "focused on quick resolution", "may express consequences of delay"] }
+            ];
+        }
         
         populateSelects(personas, behaviors);
         
@@ -258,15 +409,28 @@ async function fetchPersonasAndBehaviors() {
 
 // Populate select dropdowns
 function populateSelects(personas, behaviors) {
+    if (!personas.length || !behaviors.length) {
+        return;
+    }
+    
     // Populate the persona select
     const personaSelect = document.getElementById('personaSelect');
     personaSelect.innerHTML = '<option value="">Select persona...</option>';
     
-    personas.forEach(persona => {
+    personas.forEach((persona, index) => {
         const option = document.createElement('option');
         option.value = persona.name;
         option.textContent = persona.name;
         option.setAttribute('data-traits', persona.traits.join(', '));
+        // Select the first persona by default
+        if (index === 0) {
+            option.selected = true;
+            // Show traits for the default selected persona
+            setTimeout(() => {
+                const event = new Event('change');
+                personaSelect.dispatchEvent(event);
+            }, 0);
+        }
         personaSelect.appendChild(option);
     });
     
@@ -274,51 +438,131 @@ function populateSelects(personas, behaviors) {
     const behaviorSelect = document.getElementById('behaviorSelect');
     behaviorSelect.innerHTML = '<option value="">Select behavior...</option>';
     
-    behaviors.forEach(behavior => {
+    behaviors.forEach((behavior, index) => {
         const option = document.createElement('option');
         option.value = behavior.name;
         option.textContent = behavior.name;
         option.setAttribute('data-characteristics', behavior.characteristics.join(', '));
+        // Select the first behavior by default
+        if (index === 0) {
+            option.selected = true;
+            // Show characteristics for the default selected behavior
+            setTimeout(() => {
+                const event = new Event('change');
+                behaviorSelect.dispatchEvent(event);
+            }, 0);
+        }
         behaviorSelect.appendChild(option);
     });
 }
 
-// Fetch aggregate data and update charts
-async function fetchAggregateData() {
-    try {
-        // In a real implementation, this would fetch from an API endpoint
-        // For now, we're using sample data defined earlier
-        
-        // Update charts with data
-        updatePersonaChart(sampleData.byPersona);
-        updateBehaviorChart(sampleData.byBehavior);
-    } catch (error) {
-        console.error('Error fetching aggregate data:', error);
-    }
-}
-
 // Update persona chart
-function updatePersonaChart(data) {
-    const personaLabels = Object.keys(data);
-    const accuracyData = Object.values(data).map(p => p.accuracy * 100);
-    const empathyData = Object.values(data).map(p => p.empathy * 100);
+function updatePersonaChart(personaData) {
+    // Convert the persona data to arrays for the chart
+    const personaLabels = Object.keys(personaData);
+    const accuracyData = personaLabels.map(persona => personaData[persona].accuracy * 100);
+    const empathyData = personaLabels.map(persona => personaData[persona].empathy * 100);
     
+    // Update chart data
     personaChart.data.labels = personaLabels;
     personaChart.data.datasets[0].data = accuracyData;
     personaChart.data.datasets[1].data = empathyData;
+    
+    // Update the chart
     personaChart.update();
 }
 
 // Update behavior chart
-function updateBehaviorChart(data) {
-    const behaviorLabels = Object.keys(data);
-    const accuracyData = Object.values(data).map(b => b.accuracy * 100);
-    const empathyData = Object.values(data).map(b => b.empathy * 100);
+function updateBehaviorChart(behaviorData) {
+    // Convert the behavior data to arrays for the chart
+    const behaviorLabels = Object.keys(behaviorData);
+    const accuracyData = behaviorLabels.map(behavior => behaviorData[behavior].accuracy * 100);
+    const empathyData = behaviorLabels.map(behavior => behaviorData[behavior].empathy * 100);
     
+    // Update chart data
     behaviorChart.data.labels = behaviorLabels;
     behaviorChart.data.datasets[0].data = accuracyData;
     behaviorChart.data.datasets[1].data = empathyData;
+    
+    // Update the chart
     behaviorChart.update();
+}
+
+// Form validation function
+function validateTestForm() {
+    let isValid = true;
+    // Reset previous validation visuals
+    resetFormValidation();
+    
+    // Validate test name
+    const testNameInput = document.getElementById('testName');
+    if (!testNameInput.value.trim()) {
+        markInvalid(testNameInput, 'Please enter a test name');
+        isValid = false;
+    }
+    
+    // Validate persona selection
+    const personaSelect = document.getElementById('personaSelect');
+    if (!personaSelect.value) {
+        markInvalid(personaSelect, 'Please select a persona');
+        isValid = false;
+    }
+    
+    // Validate behavior selection
+    const behaviorSelect = document.getElementById('behaviorSelect');
+    if (!behaviorSelect.value) {
+        markInvalid(behaviorSelect, 'Please select a behavior');
+        isValid = false;
+    }
+    
+    // Validate questions
+    const questionInputs = document.querySelectorAll('.question-input');
+    if (questionInputs.length === 0) {
+        // Add at least one question if none exists
+        document.getElementById('addQuestionBtn').click();
+        const newInput = document.querySelector('.question-input');
+        markInvalid(newInput, 'Please add at least one question');
+        isValid = false;
+    } else {
+        // Check if all questions have text
+        questionInputs.forEach(input => {
+            if (!input.value.trim()) {
+                markInvalid(input, 'Please enter a question');
+                isValid = false;
+            }
+        });
+    }
+    
+    return isValid;
+}
+
+// Mark a form input as invalid with visual feedback
+function markInvalid(element, message) {
+    element.classList.add('is-invalid');
+    
+    // Create error message if it doesn't exist
+    if (!element.nextElementSibling || !element.nextElementSibling.classList.contains('invalid-feedback')) {
+        const feedback = document.createElement('div');
+        feedback.className = 'invalid-feedback';
+        feedback.textContent = message;
+        element.parentNode.insertBefore(feedback, element.nextElementSibling);
+    }
+    
+    // Focus on the first invalid element
+    if (!document.querySelector('.is-invalid:focus')) {
+        element.focus();
+    }
+}
+
+// Reset form validation visuals
+function resetFormValidation() {
+    document.querySelectorAll('.is-invalid').forEach(el => {
+        el.classList.remove('is-invalid');
+    });
+    
+    document.querySelectorAll('.invalid-feedback').forEach(el => {
+        el.parentNode.removeChild(el);
+    });
 }
 
 // Create a new test
@@ -336,34 +580,6 @@ async function createNewTest() {
         follow_ups: [],
         expected_topic: null
     }));
-    
-    if (questions.length === 0) {
-        alert('Please add at least one question');
-        return;
-    }
-    
-    // Validate inputs
-    if (!testName) {
-        alert('Please enter a test name');
-        return;
-    }
-    
-    if (!personaName) {
-        alert('Please select a persona');
-        return;
-    }
-    
-    if (!behaviorName) {
-        alert('Please select a behavior');
-        return;
-    }
-    
-    // Check if all questions have text
-    const emptyQuestions = questions.some(q => !q.text);
-    if (emptyQuestions) {
-        alert('Please fill in all questions');
-        return;
-    }
     
     // Construct test case object
     const testCase = {
@@ -534,17 +750,30 @@ function setupEventListeners() {
     // Refresh button
     document.getElementById('refreshBtn').addEventListener('click', function() {
         fetchReports();
-        fetchAggregateData();
     });
     
     // New Test button
     document.getElementById('newTestBtn').addEventListener('click', function() {
+        // Reset form validation visuals
+        resetFormValidation();
+        
+        // Pre-populate the default question if the question field is empty
+        const questionInputs = document.querySelectorAll('.question-input');
+        if (questionInputs.length > 0 && !questionInputs[0].value) {
+            questionInputs[0].value = "How do I find my member ID?";
+        }
+        
         const modal = new bootstrap.Modal(document.getElementById('newTestModal'));
         modal.show();
     });
     
     // Submit Test button
-    document.getElementById('submitTestBtn').addEventListener('click', createNewTest);
+    document.getElementById('submitTestBtn').addEventListener('click', function() {
+        // Validate form before proceeding
+        if (validateTestForm()) {
+            createNewTest();
+        }
+    });
     
     // Export Reports button
     document.getElementById('exportReportsBtn').addEventListener('click', exportReportsAsCSV);

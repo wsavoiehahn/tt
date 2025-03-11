@@ -352,7 +352,7 @@ class RealtimeService:
                         response = json.loads(message)
                         response_type = response.get("type")
 
-                        logger.error(
+                        logger.debug(
                             f"Received message {message_count} of type: {response_type}"
                         )
 
@@ -417,7 +417,7 @@ class RealtimeService:
                             if "delta" in response:
                                 # Check if delta is a string or object
                                 delta = response["delta"]
-                                logger.error(
+                                logger.info(
                                     f"Delta object: {type(delta)}, Value: {delta}"
                                 )
                                 if isinstance(delta, str):
@@ -426,7 +426,6 @@ class RealtimeService:
                                     transcript = delta.get("text", "")
 
                                 if transcript:
-                                    logger.error(f"Audio transcript: {transcript}")
                                     response_text_buffer += transcript
 
                         elif response_type == "input_audio_buffer.transcription":
