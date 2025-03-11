@@ -94,17 +94,7 @@ async def startup_event():
         evaluator_service.personas_data = config.load_personas()
         logger.info("Knowledge base and personas data loaded successfully")
 
-        # Get appropriate storage service
-        from .services.factory import get_service
-
-        storage_service = get_service("storage")
-
-        # # Initialize S3 bucket if needed
-        # s3_service.ensure_bucket_exists()
-        # logger.info(f"S3 bucket initialized: {s3_service.bucket_name}")
-
-        # Initialize storage
-        storage_service.ensure_bucket_exists()
+        s3_service.ensure_bucket_exists()
         logger.info(f"Storage initialized")
 
         # Initialize DynamoDB table
