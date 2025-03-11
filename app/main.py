@@ -23,6 +23,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Create FastAPI app
+LOG_EVENT_TYPES = [
+    "response.content.done",
+    "rate_limits.updated",
+    "response.done",
+    "input_audio_buffer.committed",
+    "input_audio_buffer.speech_stopped",
+    "input_audio_buffer.speech_started",
+    "session_created",
+]
+
 app = FastAPI(
     title="AI Call Center Evaluator",
     description="Evaluate AI call center agent performance across various personas and behaviors",
@@ -42,6 +52,7 @@ app.add_middleware(
 base_dir = Path(__file__).resolve().parent.parent
 static_dir = base_dir / "static"
 templates_dir = base_dir / "templates"
+
 
 # Mount static files if the directory exists
 if static_dir.exists():
