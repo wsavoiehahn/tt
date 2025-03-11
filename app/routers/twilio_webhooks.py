@@ -143,7 +143,7 @@ async def next_response(request: Request):
 
 @router.post("/record-response")
 async def record_response(request: Request):
-    """Handle recorded response from representative."""
+    """Handle recorded response from representative with improved error handling."""
     try:
         form_data = await request.form()
         call_sid = form_data.get("CallSid")
@@ -152,26 +152,63 @@ async def record_response(request: Request):
         recording_sid = form_data.get("RecordingSid")
 
         logger.info(f"Received recording for call {call_sid}: {recording_sid}")
+        logger.info(f"Form data: {dict(form_data)}")  # Log all form data for debugging
+
+        # Sometimes Twilio doesn't include the URL in the callback
+        if not recording_url and recording_sid:
+            logger.info(f"No URL provided, using SID: {recording_sid}")
+            recording_url = None  # Let the download_recording method handle it
 
         # Download the recording
         from ..services.twilio_service import twilio_service
 
-        audio_data = twilio_service.download_recording(recording_url)
+        audio_data = twilio_service.download_recording(recording_url, recording_sid)
+
+        if not audio_data:
+            # Try an alternative approach - get recording directly by SID
+            logger.info(f"Trying to fetch recording directly by SID")
+            recording = twilio_service.client.recordings(recording_sid).fetch()
+            recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_service.account_sid}/Recordings/{recording_sid}.mp3"
+            audio_data = twilio_service.download_recording(recording_url)
 
         if not audio_data:
             logger.error(f"Failed to download recording {recording_sid}")
-            return {"status": "error", "message": "Failed to download recording"}
+
+            # Return TwiML to continue the conversation despite the error
+            response = VoiceResponse()
+            response.say("I didn't catch that. Let me continue.")
+
+            # Redirect to get the next response
+            callback_url = twilio_service.callback_url
+            response.redirect(
+                f"{callback_url}/webhooks/next-response?test_id={test_id}"
+            )
+
+            return HTMLResponse(content=str(response), media_type="application/xml")
 
         # Process the response through OpenAI
         from ..services.realtime_service import realtime_service
 
         await realtime_service.process_agent_response(call_sid, test_id, audio_data)
 
-        return {"status": "success"}
+        # Return TwiML to continue the conversation
+        response = VoiceResponse()
+        response.redirect(
+            f"{twilio_service.callback_url}/webhooks/next-response?test_id={test_id}"
+        )
+
+        return HTMLResponse(content=str(response), media_type="application/xml")
 
     except Exception as e:
         logger.error(f"Error processing recording: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        import traceback
+
+        logger.error(traceback.format_exc())
+
+        # Return a graceful error TwiML
+        response = VoiceResponse()
+        response.say("I'm having trouble processing your response. Let's try again.")
+        return HTMLResponse(content=str(response), media_type="application/xml")
 
 
 @router.post("/call-status")

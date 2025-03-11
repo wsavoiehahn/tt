@@ -41,47 +41,80 @@ class TwilioService:
             f"DEBUG: TwilioService initialized with account_sid: {self.account_sid[:5]}***, target number: {self.ai_service_number}, callback URL: {self.callback_url}"
         )
 
-    def download_recording(self, recording_url: str) -> Optional[bytes]:
+    def download_recording(
+        self, recording_url: str, recording_sid: Optional[str] = None
+    ) -> Optional[bytes]:
         """
-        Download a recording from Twilio.
+        Download a recording from Twilio with improved error handling.
 
         Args:
             recording_url: URL of the recording to download
+            recording_sid: Optional recording SID if URL isn't complete
 
         Returns:
             Audio data as bytes, or None if download failed
         """
         try:
+            # If we only have the SID, construct the URL
+            if not recording_url and recording_sid:
+                recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}/Recordings/{recording_sid}"
+
             logger.info(f"Downloading recording from: {recording_url}")
 
             # Check if URL is valid
-            if not recording_url or not recording_url.startswith("http"):
-                logger.error(f"Invalid recording URL: {recording_url}")
+            if not recording_url:
+                logger.error("No recording URL or SID provided")
                 return None
 
-            # Add .mp3 extension if not present
-            if not recording_url.endswith(".mp3"):
+            # Ensure the URL is properly formatted
+            if not recording_url.startswith("http"):
+                # Try to construct a proper URL
+                if recording_url.startswith("RE"):
+                    # This looks like a Recording SID
+                    recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}/Recordings/{recording_url}"
+                else:
+                    logger.error(f"Invalid recording URL format: {recording_url}")
+                    return None
+
+            # Add .mp3 extension if not present and not already a complete URL
+            if not recording_url.endswith(".mp3") and "/Recordings/" in recording_url:
                 recording_url = f"{recording_url}.mp3"
 
             # Set up authentication
             auth = (self.account_sid, self.auth_token)
 
-            # Download the recording
-            response = requests.get(recording_url, auth=auth)
+            # Download the recording with a retry mechanism
+            max_retries = 3
+            retry_delay = 2  # seconds
 
-            if response.status_code != 200:
-                logger.error(
-                    f"Failed to download recording: Status {response.status_code}"
-                )
-                return None
+            for attempt in range(max_retries):
+                response = requests.get(recording_url, auth=auth)
 
-            # Get the audio data
-            audio_data = response.content
+                if response.status_code == 200:
+                    # Success
+                    audio_data = response.content
+                    logger.info(
+                        f"Successfully downloaded recording ({len(audio_data)} bytes)"
+                    )
+                    return audio_data
+                elif response.status_code == 404 and attempt < max_retries - 1:
+                    # Recordings might not be immediately available - wait and retry
+                    logger.warning(
+                        f"Recording not found (attempt {attempt+1}/{max_retries}), retrying in {retry_delay}s"
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    # Other error or final retry
+                    logger.error(
+                        f"Failed to download recording: Status {response.status_code}"
+                    )
+                    logger.error(f"Response content: {response.text[:200]}")
+                    return None
 
-            # Log success
-            logger.info(f"Successfully downloaded recording ({len(audio_data)} bytes)")
+            logger.error(f"Failed to download recording after {max_retries} attempts")
+            return None
 
-            return audio_data
         except Exception as e:
             logger.error(f"Error downloading recording: {str(e)}")
             import traceback
