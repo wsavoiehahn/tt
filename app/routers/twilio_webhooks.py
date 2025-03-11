@@ -1,3 +1,4 @@
+# app/routers/twilio_webhooks.py
 import logging
 import json
 
@@ -41,33 +42,24 @@ async def call_started(request: Request):
         # Get test data
         test_data = dynamodb_service.get_test(test_id) or {}
         test_case = test_data.get("test_case", {})
-        questions = test_case.get("config", {}).get("questions", [])
-        first_question = (
-            questions[0].get("text", "Tell me about your service.")
-            if questions
-            else "No questions available."
-        )
 
         # Initialize OpenAI session
         await realtime_service.initialize_session(call_sid=call_sid, test_id=test_id)
 
-        # Generate TwiML to ask the question and record response
+        # Generate TwiML to respond to the initial greeting
         response = VoiceResponse()
 
-        # Say the first question
-        response.say(first_question)
+        # Add pause to ensure smooth conversation
+        response.pause(length=0.5)
 
-        # Record the representative's response
+        # Record the representative's greeting/initial question
         response.record(
             action=f"{callback_url}/webhooks/record-response?test_id={test_id}",
             maxLength=60,  # 60 seconds max
-            timeout=2,  # Stop recording after 5 seconds of silence
+            timeout=2,  # Stop recording after 2 seconds of silence
             playBeep=True,
             recordingStatusCallback=f"{callback_url}/webhooks/recording-status?test_id={test_id}",
         )
-
-        # Add pause to ensure smooth conversation
-        response.pause(length=0.1)
 
         # Get the next response from OpenAI - this will be a redirect
         response.redirect(f"{callback_url}/webhooks/next-response?test_id={test_id}")
@@ -93,8 +85,6 @@ async def next_response(request: Request):
         logger.info(f"Getting next response - CallSid: {call_sid}, Test ID: {test_id}")
 
         # Get the latest OpenAI response
-        from ..services.realtime_service import realtime_service
-
         response_text = realtime_service.get_latest_response(call_sid)
 
         # Generate TwiML to say the response and continue conversation
@@ -160,8 +150,6 @@ async def record_response(request: Request):
             recording_url = None  # Let the download_recording method handle it
 
         # Download the recording
-        from ..services.twilio_service import twilio_service
-
         audio_data = twilio_service.download_recording(recording_url, recording_sid)
 
         if not audio_data:
@@ -179,7 +167,6 @@ async def record_response(request: Request):
             response.say("I didn't catch that. Let me continue.")
 
             # Redirect to get the next response
-            callback_url = twilio_service.callback_url
             response.redirect(
                 f"{callback_url}/webhooks/next-response?test_id={test_id}"
             )
@@ -187,15 +174,11 @@ async def record_response(request: Request):
             return HTMLResponse(content=str(response), media_type="application/xml")
 
         # Process the response through OpenAI
-        from ..services.realtime_service import realtime_service
-
         await realtime_service.process_agent_response(call_sid, test_id, audio_data)
 
         # Return TwiML to continue the conversation
         response = VoiceResponse()
-        response.redirect(
-            f"{twilio_service.callback_url}/webhooks/next-response?test_id={test_id}"
-        )
+        response.redirect(f"{callback_url}/webhooks/next-response?test_id={test_id}")
 
         return HTMLResponse(content=str(response), media_type="application/xml")
 
@@ -209,6 +192,51 @@ async def record_response(request: Request):
         response = VoiceResponse()
         response.say("I'm having trouble processing your response. Let's try again.")
         return HTMLResponse(content=str(response), media_type="application/xml")
+
+
+@router.post("/recording-status")
+async def recording_status(request: Request):
+    """Handle recording status updates."""
+    try:
+        form_data = await request.form()
+        recording_sid = form_data.get("RecordingSid")
+        recording_status = form_data.get("RecordingStatus")
+        recording_url = form_data.get("RecordingUrl")
+        call_sid = form_data.get("CallSid")
+        test_id = request.query_params.get("test_id")
+
+        logger.info(
+            f"Recording Status Update - RecordingSid: {recording_sid}, Status: {recording_status}, URL: {recording_url}"
+        )
+
+        # Store recording URL if available
+        if recording_status == "completed" and recording_url and call_sid and test_id:
+            # Store the recording URL in S3 and get a permanent URL
+            from ..services.s3_service import s3_service
+
+            permanent_url = s3_service.save_recording(recording_url, test_id, call_sid)
+
+            # Update the conversation turn with the audio URL
+            from ..services.evaluator import evaluator_service
+
+            if test_id in evaluator_service.active_tests:
+                conversation = evaluator_service.active_tests[test_id].get(
+                    "conversation", []
+                )
+                # Find the last agent turn without an audio URL
+                for turn in reversed(conversation):
+                    if turn["speaker"] == "agent" and not turn.get("audio_url"):
+                        turn["audio_url"] = permanent_url
+                        break
+
+        return {"status": "received"}
+
+    except Exception as e:
+        logger.error(f"Error in recording-status: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        return {"status": "error", "message": str(e)}
 
 
 @router.post("/call-status")
