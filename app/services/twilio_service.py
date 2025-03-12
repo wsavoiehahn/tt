@@ -32,13 +32,16 @@ class TwilioService:
                 "/ai-evaluator/ai_service_phone_number", False
             )
         self.callback_url = config.get_parameter("/ai-evaluator/twilio_callback_url")
-
+        if not self.callback_url:
+            self.callback_url = config.get_parameter(
+                "/ai-evaluator/twilio_callback_url", False
+            )
         # Track active calls
         self.active_calls = {}
 
         # Log initialization
-        logger.error(
-            f"DEBUG: TwilioService initialized with account_sid: {self.account_sid[:5]}***, target number: {self.ai_service_number}, callback URL: {self.callback_url}"
+        logger.info(
+            f"TwilioService initialized with account_sid: {self.account_sid[:5]}***, target number: {self.ai_service_number}, callback URL: {self.callback_url}"
         )
 
     def download_recording(
@@ -129,48 +132,12 @@ class TwilioService:
         try:
             logger.info(f"Initiating call for test_id: {test_id}")
 
-            # Get the AI service phone number from parameter store
-            ai_service_number = self.ai_service_number
-
-            # If not set, try to get it directly from parameter store
-            if not ai_service_number:
-                logger.error(
-                    f"DEBUG: No AI service number found in instance, checking parameter store"
-                )
-                ai_service_number = config.get_parameter(
-                    "/twilio/target_phone_number", False
-                )
-                if ai_service_number:
-                    self.ai_service_number = ai_service_number
-                    logger.error(
-                        f"DEBUG: Updated target phone number to: {ai_service_number}"
-                    )
-                else:
-                    # Try alternate parameter name
-                    ai_service_number = config.get_parameter(
-                        "/ai-evaluator/ai_service_phone_number", False
-                    )
-                    if ai_service_number:
-                        self.ai_service_number = ai_service_number
-                        logger.error(
-                            f"Found alternate target phone number: {ai_service_number}"
-                        )
-
-            if not ai_service_number:
-                error_msg = "AI service phone number not configured"
-                logger.error(f"{error_msg}")
-                return {"error": error_msg, "test_id": test_id, "status": "failed"}
-
             # Get outbound number
             from_number = self.get_outbound_number()
-            logger.debug(f"Using outbound number: {from_number}")
+            logger.info(f"Using outbound number: {from_number}")
 
             # Get callback URL from config
             callback_url = self.callback_url
-            if not callback_url:
-                callback_url = config.get_parameter(
-                    "/ai-evaluator/twilio_callback_url", False
-                )
 
             logger.debug(f"Using callback URL: {callback_url}")
 
@@ -229,7 +196,7 @@ class TwilioService:
             # Initiate the call with the simplified TwiML
             try:
                 logger.info(
-                    f"Initiating call to {ai_service_number} from {from_number}"
+                    f"Initiating call to {self.ai_service_number} from {from_number}"
                 )
 
                 # Log Twilio account info (masked)
@@ -249,7 +216,7 @@ class TwilioService:
 
                 # Create the call with all parameters
                 call = self.client.calls.create(
-                    to=ai_service_number,
+                    to=self.ai_service_number,
                     from_=from_number,
                     twiml=str(response),
                     status_callback=status_callback_url,
@@ -287,12 +254,12 @@ class TwilioService:
                 "test_id": test_id,
                 "status": "initiated",
                 "start_time": time.time(),
-                "to": ai_service_number,
+                "to": self.ai_service_number,
                 "from": from_number,
             }
 
             logger.info(
-                f"Call initiated: {call.sid} for test {test_id} to {ai_service_number}"
+                f"Call initiated: {call.sid} for test {test_id} to {self.ai_service_number}"
             )
 
             # Update test data with call information
@@ -313,7 +280,7 @@ class TwilioService:
                 "call_sid": call.sid,
                 "status": call.status,
                 "test_id": test_id,
-                "to": ai_service_number,
+                "to": self.ai_service_number,
             }
 
         except Exception as e:
@@ -334,14 +301,12 @@ class TwilioService:
             else:
                 # Fallback to default number
                 default_number = config.get_parameter("/twilio/phone_number")
-                logger.error(f"DEBUG: Using default outbound number: {default_number}")
+                logger.error(f"Using default outbound number: {default_number}")
                 return default_number
         except Exception as e:
-            logger.error(f"DEBUG: Error getting outbound number: {str(e)}")
+            logger.error(f"Error getting outbound number: {str(e)}")
             default_number = config.get_parameter("/twilio/phone_number")
-            logger.error(
-                f"DEBUG: Falling back to default outbound number: {default_number}"
-            )
+            logger.error(f"Falling back to default outbound number: {default_number}")
             return default_number
 
     def get_outbound_number(self) -> str:

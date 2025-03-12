@@ -20,15 +20,11 @@ logger = logging.getLogger(__name__)
 try:
     from app.main import app
 
-    logger.info("Successfully imported app from app.main")
+    logger.debug("Successfully imported app from app.main")
 except Exception as e:
     logger.error("Failed to import app from app.main")
     logger.error(f"Error: {e}")
     logger.error(traceback.format_exc())
-
-    # Create a new app if import failed
-    app = FastAPI()
-    logger.info("Created new FastAPI app as fallback")
 
 # Import custom WebSocket handlers
 try:
@@ -63,8 +59,8 @@ def lambda_handler(event, context):
     """AWS Lambda handler that supports both WebSockets and HTTP API requests"""
     try:
         # Enhanced logging for debugging
-        # logger.error(f"Event type: {type(event)}")
-        # logger.error(f"Event content: {json.dumps(event, default=str)}")
+        logger.debug(f"Event type: {type(event)}")
+        logger.debug(f"Event content: {json.dumps(event, default=str)}")
 
         # Extract request details
         request_context = event.get("requestContext", {})
@@ -74,38 +70,36 @@ def lambda_handler(event, context):
         domain_name = request_context.get("domainName")
         stage = request_context.get("stage")
 
-        logger.error(f"Event type: {event_type}, Route key: {route_key}")
-        logger.error(
+        logger.info(f"Event type: {event_type}, Route key: {route_key}")
+        logger.info(
             f"Connection ID: {connection_id}, Domain: {domain_name}, Stage: {stage}"
         )
 
         # Extract query parameters if any
         query_params = event.get("queryStringParameters", {}) or {}
-        logger.error(f"Query parameters: {query_params}")
+        logger.info(f"Query parameters: {query_params}")
 
         # Handle WebSocket connections
         if event_type == "CONNECT":
-            logger.error("WebSocket CONNECT event received")
+            logger.info("WebSocket CONNECT event received")
             # Accept all connections for now for testing
             return {"statusCode": 200, "body": "WebSocket connected"}
 
         elif event_type == "DISCONNECT":
-            logger.error("WebSocket DISCONNECT event received")
+            logger.info("WebSocket DISCONNECT event received")
             return {"statusCode": 200, "body": "WebSocket disconnected"}
 
         elif event_type == "MESSAGE":
-            logger.error(f"WebSocket MESSAGE event received")
+            logger.info(f"WebSocket MESSAGE event received")
             message_body = event.get("body", "{}")
-            logger.error(f"Message body: {message_body}")
+            logger.info(f"Message body: {message_body}")
             return {"statusCode": 200, "body": "Message received"}
 
         # Route-specific handlers
         elif route_key == "$default" and "media-stream" in event.get(
             "requestContext", {}
         ).get("resourcePath", ""):
-            logger.error(
-                "Handling media-stream WebSocket connection via $default route"
-            )
+            logger.info("Handling media-stream WebSocket connection via $default route")
             # Accept all media-stream connections for now for testing
             return {"statusCode": 200, "body": "Media stream connected"}
 
@@ -116,7 +110,7 @@ def lambda_handler(event, context):
 
         # Handle HTTP requests using Mangum (FastAPI)
         else:
-            logger.error(f"Handling HTTP request with route: {route_key}")
+            logger.info(f"Handling HTTP request with route: {route_key}")
             return handler(event, context)
 
     except Exception as e:
