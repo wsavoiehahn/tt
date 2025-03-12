@@ -57,7 +57,7 @@ class DynamoDBService:
             True if successful, False otherwise
         """
         try:
-            logger.debug(f"DEBUG: Saving test {test_id} to DynamoDB")
+            logger.debug(f"Saving test {test_id} to DynamoDB")
 
             # Convert any non-serializable objects to strings
             test_data_json = json.dumps(test_data, default=str)
@@ -71,13 +71,13 @@ class DynamoDBService:
                     "status": test_data.get("status", "unknown"),
                 }
             )
-            logger.info(f"DEBUG: Test {test_id} saved to DynamoDB")
+            logger.info(f"Test {test_id} saved to DynamoDB")
             return True
         except Exception as e:
-            logger.error(f"DEBUG: Error saving test to DynamoDB: {str(e)}")
+            logger.error(f"Error saving test to DynamoDB: {str(e)}")
             import traceback
 
-            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
     def get_test(self, test_id: str) -> Optional[Dict[str, Any]]:
@@ -126,10 +126,10 @@ class DynamoDBService:
                 ExpressionAttributeValues={":status": status},
                 ReturnValues="UPDATED_NEW",
             )
-            logger.error(f"DEBUG: Updated test {test_id} status in DynamoDB")
+            logger.info(f"Updated test {test_id} status in DynamoDB")
             return True
         except Exception as e:
-            logger.error(f"DEBUG: Error updating test status in DynamoDB: {str(e)}")
+            logger.error(f"Error updating test status in DynamoDB: {str(e)}")
             return False
 
     def get_waiting_tests(self) -> List[Dict[str, Any]]:

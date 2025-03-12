@@ -196,7 +196,7 @@ class S3Service:
                 Body=json.dumps(test_case_data, default=str).encode("utf-8"),
                 ContentType="application/json",
             )
-
+            logger.info(f"Test case saved to S3 for test {test_id}")
             return f"s3://{self.bucket_name}/{key}"
         except ClientError as e:
             logger.error(f"Error saving test case to S3: {str(e)}")
