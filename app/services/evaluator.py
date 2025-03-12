@@ -91,6 +91,33 @@ class EvaluatorService:
                 )
         return None
 
+    def _mark_test_as_failed_and_update_dynamo(self, test_id, error, action="failed"):
+        """
+        Mark a test as failed with an error message.
+
+        Args:
+            error: Error message
+            action: Optional action description
+        """
+        from ..services.dynamodb_service import dynamodb_service
+
+        self.active_tests[test_id]["status"] = "failed"
+        self.active_tests[test_id]["error"] = error
+        self.active_tests[test_id]["execution_details"].append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "action": action,
+                "error": error,
+            }
+        )
+        # Update in DynamoDB
+        dynamodb_service.update_test_status(test_id, "failed")
+        dynamodb_service.save_test(test_id, self.active_tests[test_id])
+
+        logger.warning(
+            f"Test status after error: {self.active_tests[test_id]['status']}"
+        )
+
     async def execute_test_case(self, test_case: TestCase) -> TestCaseReport:
         """
         Execute a test case by initiating an outbound call to the target agent.
@@ -170,19 +197,9 @@ class EvaluatorService:
             )
 
             # Update status to failed with error details
-            self.active_tests[test_id]["status"] = "failed"
-            self.active_tests[test_id]["error"] = "Invalid persona or behavior"
-            self.active_tests[test_id]["execution_details"].append(
-                {
-                    "timestamp": datetime.now().isoformat(),
-                    "action": "validation_failed",
-                    "error": "Invalid persona or behavior",
-                }
+            self._mark_test_as_failed_and_update_dynamo(
+                self, test_id, error="Invalid persona or behavior", action="failed"
             )
-
-            # Update in DynamoDB
-            dynamodb_service.update_test_status(test_id, "failed")
-            dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
             # update report with error and execution time
             report.overall_metrics.error_message = "Invalid persona or behavior"
@@ -225,24 +242,10 @@ class EvaluatorService:
                 raise  # Re-raise to be caught by outer exception handler
 
             if "error" in call_result:
-                logger.error(f"DEBUG: Failed to initiate call: {call_result['error']}")
+                logger.error(f"Failed to initiate call: {call_result['error']}")
                 # Mark test as failed
-                self.active_tests[test_id]["status"] = "failed"
-                self.active_tests[test_id]["error"] = call_result["error"]
-                self.active_tests[test_id]["execution_details"].append(
-                    {
-                        "timestamp": datetime.now().isoformat(),
-                        "action": "call_failed",
-                        "error": call_result["error"],
-                    }
-                )
-
-                # Update in DynamoDB
-                dynamodb_service.update_test_status(test_id, "failed")
-                dynamodb_service.save_test(test_id, self.active_tests[test_id])
-
-                logger.error(
-                    f"DEBUG: Test status after error: {self.active_tests[test_id]['status']}"
+                self._mark_test_as_failed_and_update_dynamo(
+                    self, test_id, error=call_result["error"], action="call_failed"
                 )
 
                 # update report with error and execution time
@@ -334,18 +337,9 @@ class EvaluatorService:
         except Exception as e:
             logger.error(f"Error in execute_test_case: {str(e)}")
             # Mark test as failed
-            self.active_tests[test_id]["status"] = "failed"
-            self.active_tests[test_id]["error"] = str(e)
-            self.active_tests[test_id]["execution_details"].append(
-                {
-                    "timestamp": datetime.now().isoformat(),
-                    "action": "exception",
-                    "error": str(e),
-                }
+            self._mark_test_as_failed_and_update_dynamo(
+                self, test_id, error=str(e), action="exception"
             )
-
-            dynamodb_service.update_test_status(test_id, "failed")
-            dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
             # update report with error and execution time
             report.overall_metrics.error_message = (
