@@ -91,27 +91,6 @@ class EvaluatorService:
                 )
         return None
 
-    def _create_error_test_report(
-        test_case: TestCase, error_message: str, start_time: float
-    ) -> TestCaseReport:
-        """helper method to reduce code copying"""
-        TestCaseReport(
-            test_case_id=test_case.id,
-            test_case_name=test_case.name,
-            persona_name=test_case.config.persona_name,
-            behavior_name=test_case.config.behavior_name,
-            questions_evaluated=[],
-            overall_metrics=EvaluationMetrics(
-                accuracy=0.0,
-                empathy=0.0,
-                response_time=0.0,
-                successful=False,
-                error_message=error_message,
-            ),
-            execution_time=time.time() - start_time,
-            special_instructions=test_case.config.special_instructions,
-        )
-
     async def execute_test_case(self, test_case: TestCase) -> TestCaseReport:
         """
         Execute a test case by initiating an outbound call to the target agent.
@@ -131,7 +110,7 @@ class EvaluatorService:
         logger.info(
             f"Test case details: {test_case.name}, persona: {test_case.config.persona_name}, behavior: {test_case.config.behavior_name}"
         )
-        logger.error(
+        logger.info(
             f"Test case questions: {[q.text if isinstance(q, dict) else q for q in test_case.config.questions]}"
         )
 
@@ -154,32 +133,40 @@ class EvaluatorService:
             }
         )
 
+        # initialize blank test report:
+        report = TestCaseReport(
+            test_case_id=test_case.id,
+            test_case_name=test_case.name,
+            persona_name=test_case.config.persona_name,
+            behavior_name=test_case.config.behavior_name,
+            questions_evaluated=[],
+            overall_metrics=EvaluationMetrics(
+                accuracy=0.0,
+                empathy=0.0,
+                response_time=0.0,
+                successful=False,
+                error_message=None,
+            ),
+            execution_time=0.0,
+            special_instructions=test_case.config.special_instructions,
+        )
+
         # Also save to DynamoDB for persistence across Lambda executions
         from ..services.dynamodb_service import dynamodb_service
 
         # Make sure we're explicitly saving everything needed by the call initiation process
-        try:
-            dynamodb_service.save_test(test_id, self.active_tests[test_id])
-        except Exception as ddb_error:
-            logger.error(f"Error saving to DynamoDB: {str(ddb_error)}")
-            import traceback
-
-            logger.error(f"DynamoDB save trace: {traceback.format_exc()}")
+        dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
         # Save test case configuration to S3
-        try:
-            s3_service.save_test_case(test_case.dict(), test_id)
-            logger.info(f"Test case saved to S3 for test {test_id}")
-        except Exception as s3_error:
-            logger.error(f"Error saving to S3: {str(s3_error)}")
+        s3_service.save_test_case(test_case.dict(), test_id)
 
+        ##TODO simplify this to make it more prosaic
         # Get persona and behavior
         persona = self.get_persona(test_case.config.persona_name)
         behavior = self.get_behavior(test_case.config.behavior_name)
-
         if not persona or not behavior:
             logger.error(
-                f"DEBUG: Invalid persona or behavior: {test_case.config.persona_name}, {test_case.config.behavior_name}"
+                f"Invalid persona or behavior: {test_case.config.persona_name}, {test_case.config.behavior_name}"
             )
 
             # Update status to failed with error details
@@ -196,12 +183,11 @@ class EvaluatorService:
             # Update in DynamoDB
             dynamodb_service.update_test_status(test_id, "failed")
             dynamodb_service.save_test(test_id, self.active_tests[test_id])
-            return self._create_error_test_report(
-                test_case,
-                error_message="Invalid persona or behavior",
-                start_time=start_time,
-            )
 
+            # update report with error and execution time
+            report.overall_metrics.error_message = "Invalid persona or behavior"
+            report.execution_time = time.time() - start_time
+            return report
         try:
             # Import at function level to avoid circular imports
             from .twilio_service import twilio_service
@@ -216,35 +202,25 @@ class EvaluatorService:
                 }
             )
 
-            logger.error(
-                f"DEBUG: Set test {test_id} status to waiting_for_call before call initiation"
+            logger.debug(
+                f"Set test {test_id} status to waiting_for_call before call initiation"
             )
 
             # Update in DynamoDB immediately
-            try:
-                dynamodb_service.update_test_status(test_id, "waiting_for_call")
-                logger.error(
-                    f"DEBUG: Updated test status in DynamoDB to waiting_for_call"
-                )
+            dynamodb_service.update_test_status(test_id, "waiting_for_call")
+            logger.debug(f"Updated test status in DynamoDB to waiting_for_call")
 
-                # Save the full test data again to DynamoDB
-                dynamodb_service.save_test(test_id, self.active_tests[test_id])
-            except Exception as ddb_error:
-                logger.error(f"DEBUG: Error updating DynamoDB: {str(ddb_error)}")
+            # Save the full test data again to DynamoDB
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
             # Initiate the outbound call - with more logging around this critical step
-            logger.error(f"DEBUG: About to initiate Twilio call for test {test_id}")
+            logger.debug(f"About to initiate Twilio call for test {test_id}")
             try:
                 call_result = twilio_service.initiate_call(test_id)
-                logger.error(f"DEBUG: Call initiation result: {call_result}")
+                logger.info(f"Call initiation result: {call_result}")
             except Exception as twilio_error:
                 logger.error(
                     f"DEBUG: Twilio call initiation error: {str(twilio_error)}"
-                )
-                import traceback
-
-                logger.error(
-                    f"DEBUG: Twilio call error trace: {traceback.format_exc()}"
                 )
                 raise  # Re-raise to be caught by outer exception handler
 
@@ -269,11 +245,12 @@ class EvaluatorService:
                     f"DEBUG: Test status after error: {self.active_tests[test_id]['status']}"
                 )
 
-                return self._create_error_test_report(
-                    test_case,
-                    error_message=f"Failed to initiate call: {call_result['error']}",
-                    start_time=start_time,
+                # update report with error and execution time
+                report.overall_metrics.error_message = (
+                    f"Failed to initiate call: {call_result['error']}"
                 )
+                report.execution_time = time.time() - start_time
+                return report
 
             call_sid = call_result["call_sid"]
             logger.error(f"DEBUG: Call initiated with SID: {call_sid}")
@@ -311,7 +288,7 @@ class EvaluatorService:
             try:
                 self.active_tests[test_id]["call_sid"] = call_sid
                 dynamodb_service.save_test(test_id, self.active_tests[test_id])
-                logger.error(f"DEBUG: Updated test in DynamoDB with call_sid")
+                logger.info(f"Updated test in DynamoDB with call_sid")
             except Exception as ddb_error:
                 logger.error(
                     f"DEBUG: Error updating DynamoDB with call_sid: {str(ddb_error)}"
@@ -343,24 +320,6 @@ class EvaluatorService:
 
             logger.error(f"DEBUG: Call initiated: {call_sid} for test {test_id}")
 
-            # Create a placeholder report
-            report = TestCaseReport(
-                test_case_id=test_case.id,
-                test_case_name=test_case.name,
-                persona_name=test_case.config.persona_name,
-                behavior_name=test_case.config.behavior_name,
-                questions_evaluated=[],
-                overall_metrics=EvaluationMetrics(
-                    accuracy=0.0,
-                    empathy=0.0,
-                    response_time=0.0,
-                    successful=True,
-                    error_message=None,
-                ),
-                execution_time=0.0,
-                special_instructions=test_case.config.special_instructions,
-            )
-
             # Save initial report
             report_id = str(report.id)
             s3_service.save_report(report.dict(), report_id)
@@ -370,15 +329,10 @@ class EvaluatorService:
             dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
             logger.info(f"Initial report created: {report_id}")
-
             return report
 
         except Exception as e:
             logger.error(f"Error in execute_test_case: {str(e)}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
-
             # Mark test as failed
             self.active_tests[test_id]["status"] = "failed"
             self.active_tests[test_id]["error"] = str(e)
@@ -390,17 +344,15 @@ class EvaluatorService:
                 }
             )
 
-            # Update in DynamoDB
-            from ..services.dynamodb_service import dynamodb_service
-
             dynamodb_service.update_test_status(test_id, "failed")
             dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
-            return self._create_error_test_report(
-                test_case,
-                error_message=f"Error executing test case: {str(e)}",
-                start_time=start_time,
+            # update report with error and execution time
+            report.overall_metrics.error_message = (
+                f"Error executing test case: {str(e)}"
             )
+            report.execution_time = time.time() - start_time
+            return report
 
     async def process_call(
         self, test_id: str, call_sid: str, conversation: List[Dict[str, Any]]
