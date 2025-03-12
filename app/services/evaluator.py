@@ -91,6 +91,27 @@ class EvaluatorService:
                 )
         return None
 
+    def _create_error_test_report(
+        test_case: TestCase, error_message: str, start_time: float
+    ) -> TestCaseReport:
+        """helper method to reduce code copying"""
+        TestCaseReport(
+            test_case_id=test_case.id,
+            test_case_name=test_case.name,
+            persona_name=test_case.config.persona_name,
+            behavior_name=test_case.config.behavior_name,
+            questions_evaluated=[],
+            overall_metrics=EvaluationMetrics(
+                accuracy=0.0,
+                empathy=0.0,
+                response_time=0.0,
+                successful=False,
+                error_message=error_message,
+            ),
+            execution_time=time.time() - start_time,
+            special_instructions=test_case.config.special_instructions,
+        )
+
     async def execute_test_case(self, test_case: TestCase) -> TestCaseReport:
         """
         Execute a test case by initiating an outbound call to the target agent.
@@ -101,19 +122,17 @@ class EvaluatorService:
         Returns:
             TestCaseReport containing evaluation results
         """
-        logger.error(
-            f"DEBUG: Executing test case: {test_case.name}, ID: {test_case.id}"
-        )
+        logger.info(f"Executing test case: {test_case.name}, ID: {test_case.id}")
 
         start_time = time.time()
         test_id = str(test_case.id)
 
         # Add more detailed logging to track the execution flow
-        logger.error(
-            f"DEBUG: Test case details: {test_case.name}, persona: {test_case.config.persona_name}, behavior: {test_case.config.behavior_name}"
+        logger.info(
+            f"Test case details: {test_case.name}, persona: {test_case.config.persona_name}, behavior: {test_case.config.behavior_name}"
         )
         logger.error(
-            f"DEBUG: Test case questions: {[q.text if isinstance(q, dict) else q for q in test_case.config.questions]}"
+            f"Test case questions: {[q.text if isinstance(q, dict) else q for q in test_case.config.questions]}"
         )
 
         # Initialize test tracking in memory with more details
@@ -142,17 +161,17 @@ class EvaluatorService:
         try:
             dynamodb_service.save_test(test_id, self.active_tests[test_id])
         except Exception as ddb_error:
-            logger.error(f"DEBUG: Error saving to DynamoDB: {str(ddb_error)}")
+            logger.error(f"Error saving to DynamoDB: {str(ddb_error)}")
             import traceback
 
-            logger.error(f"DEBUG: DynamoDB save trace: {traceback.format_exc()}")
+            logger.error(f"DynamoDB save trace: {traceback.format_exc()}")
 
         # Save test case configuration to S3
         try:
             s3_service.save_test_case(test_case.dict(), test_id)
-            logger.error(f"DEBUG: Test case saved to S3 for test {test_id}")
+            logger.info(f"Test case saved to S3 for test {test_id}")
         except Exception as s3_error:
-            logger.error(f"DEBUG: Error saving to S3: {str(s3_error)}")
+            logger.error(f"Error saving to S3: {str(s3_error)}")
 
         # Get persona and behavior
         persona = self.get_persona(test_case.config.persona_name)
@@ -177,22 +196,10 @@ class EvaluatorService:
             # Update in DynamoDB
             dynamodb_service.update_test_status(test_id, "failed")
             dynamodb_service.save_test(test_id, self.active_tests[test_id])
-
-            return TestCaseReport(
-                test_case_id=test_case.id,
-                test_case_name=test_case.name,
-                persona_name=test_case.config.persona_name,
-                behavior_name=test_case.config.behavior_name,
-                questions_evaluated=[],
-                overall_metrics=EvaluationMetrics(
-                    accuracy=0.0,
-                    empathy=0.0,
-                    response_time=0.0,
-                    successful=False,
-                    error_message="Invalid persona or behavior",
-                ),
-                execution_time=time.time() - start_time,
-                special_instructions=test_case.config.special_instructions,
+            return self._create_error_test_report(
+                test_case,
+                error_message="Invalid persona or behavior",
+                start_time=start_time,
             )
 
         try:
@@ -262,21 +269,10 @@ class EvaluatorService:
                     f"DEBUG: Test status after error: {self.active_tests[test_id]['status']}"
                 )
 
-                return TestCaseReport(
-                    test_case_id=test_case.id,
-                    test_case_name=test_case.name,
-                    persona_name=test_case.config.persona_name,
-                    behavior_name=test_case.config.behavior_name,
-                    questions_evaluated=[],
-                    overall_metrics=EvaluationMetrics(
-                        accuracy=0.0,
-                        empathy=0.0,
-                        response_time=0.0,
-                        successful=False,
-                        error_message=f"Failed to initiate call: {call_result['error']}",
-                    ),
-                    execution_time=time.time() - start_time,
-                    special_instructions=test_case.config.special_instructions,
+                return self._create_error_test_report(
+                    test_case,
+                    error_message=f"Failed to initiate call: {call_result['error']}",
+                    start_time=start_time,
                 )
 
             call_sid = call_result["call_sid"]
@@ -373,15 +369,15 @@ class EvaluatorService:
             self.active_tests[test_id]["report_id"] = report_id
             dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
-            logger.error(f"DEBUG: Initial report created: {report_id}")
+            logger.info(f"Initial report created: {report_id}")
 
             return report
 
         except Exception as e:
-            logger.error(f"DEBUG: Error in execute_test_case: {str(e)}")
+            logger.error(f"Error in execute_test_case: {str(e)}")
             import traceback
 
-            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
             # Mark test as failed
             self.active_tests[test_id]["status"] = "failed"
@@ -400,21 +396,10 @@ class EvaluatorService:
             dynamodb_service.update_test_status(test_id, "failed")
             dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
-            return TestCaseReport(
-                test_case_id=test_case.id,
-                test_case_name=test_case.name,
-                persona_name=test_case.config.persona_name,
-                behavior_name=test_case.config.behavior_name,
-                questions_evaluated=[],
-                overall_metrics=EvaluationMetrics(
-                    accuracy=0.0,
-                    empathy=0.0,
-                    response_time=0.0,
-                    successful=False,
-                    error_message=f"Error executing test case: {str(e)}",
-                ),
-                execution_time=time.time() - start_time,
-                special_instructions=test_case.config.special_instructions,
+            return self._create_error_test_report(
+                test_case,
+                error_message=f"Error executing test case: {str(e)}",
+                start_time=start_time,
             )
 
     async def process_call(
