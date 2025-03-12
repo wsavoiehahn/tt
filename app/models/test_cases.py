@@ -18,12 +18,11 @@ class KnowledgeBase(BaseModel):
 class TestQuestion(BaseModel):
     text: str
     follow_ups: Optional[List[str]] = None
-    expected_topic: Optional[str] = None  # For accuracy evaluation
 
 
 class TestCaseConfig(BaseModel):
-    persona_name: str
-    behavior_name: str
+    persona_name: str = "Tech-Savvy"
+    behavior_name: str = "frustrated"
     questions: List[TestQuestion]
     special_instructions: Optional[str] = None
     max_turns: int = 4  # Default max conversation turns after main question

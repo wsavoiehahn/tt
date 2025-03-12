@@ -532,7 +532,7 @@ class EvaluatorService:
         # determine which parts correspond to which questions
         for question in test_case.config.questions:
             metrics = await self._evaluate_conversation(
-                question.text, question.expected_topic, conversation_turns
+                question.text, conversation_turns
             )
 
             question_eval = QuestionEvaluation(
@@ -570,7 +570,6 @@ class EvaluatorService:
     async def _evaluate_conversation(
         self,
         question: str,
-        expected_topic: Optional[str],
         conversation: List[ConversationTurn],
     ) -> EvaluationMetrics:
         """
@@ -578,7 +577,6 @@ class EvaluatorService:
 
         Args:
             question: Original question
-            expected_topic: Expected topic
             conversation: List of conversation turns
 
         Returns:
@@ -610,7 +608,6 @@ class EvaluatorService:
             # Use OpenAI to evaluate the conversation
             metrics = await openai_service.evaluate_conversation(
                 question=question,
-                expected_topic=expected_topic,
                 conversation=[turn.dict() for turn in conversation],
                 knowledge_base=self.knowledge_base,
             )

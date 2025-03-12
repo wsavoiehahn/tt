@@ -113,7 +113,6 @@ class OpenAIService:
     async def evaluate_conversation(
         self,
         question: str,
-        expected_topic: Optional[str],
         conversation: List[Dict[str, str]],
         knowledge_base: Dict[str, Any],
     ) -> EvaluationMetrics:
@@ -122,7 +121,6 @@ class OpenAIService:
 
         Args:
             question: The original question asked
-            expected_topic: The expected topic from the knowledge base
             conversation: List of conversation turns with speaker and text
             knowledge_base: The knowledge base for reference
 
@@ -130,9 +128,7 @@ class OpenAIService:
             EvaluationMetrics with accuracy and empathy scores
         """
         # Construct the prompt for evaluation
-        prompt = self._create_evaluation_prompt(
-            question, expected_topic, conversation, knowledge_base
-        )
+        prompt = self._create_evaluation_prompt(question, conversation, knowledge_base)
 
         response = requests.post(
             self.api_url,
@@ -222,7 +218,6 @@ class OpenAIService:
     def _create_evaluation_prompt(
         self,
         question: str,
-        expected_topic: Optional[str],
         conversation: List[Dict[str, str]],
         knowledge_base: Dict[str, Any],
     ) -> str:
@@ -235,18 +230,10 @@ class OpenAIService:
 
         # Extract relevant information from knowledge base
         relevant_answer = ""
-        if expected_topic:
-            for faq_dict in knowledge_base.get("faqs", []):
-                for q, a in faq_dict.items():
-                    if expected_topic.lower() in q.lower():
-                        relevant_answer = a
-                        break
-
         return f"""
         Please evaluate this customer service conversation between an AI agent and a customer.
         
         Original customer question: "{question}"
-        Expected topic: "{expected_topic if expected_topic else 'Not specified'}"
         
         Conversation transcript:
         {conversation_text}

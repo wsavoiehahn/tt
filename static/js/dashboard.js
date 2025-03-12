@@ -578,7 +578,6 @@ async function createNewTest() {
     const questions = Array.from(questionInputs).map(input => ({
         text: input.value,
         follow_ups: [],
-        expected_topic: null
     }));
     
     // Construct test case object
