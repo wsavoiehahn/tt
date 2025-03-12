@@ -236,9 +236,7 @@ class EvaluatorService:
                 call_result = twilio_service.initiate_call(test_id)
                 logger.info(f"Call initiation result: {call_result}")
             except Exception as twilio_error:
-                logger.error(
-                    f"DEBUG: Twilio call initiation error: {str(twilio_error)}"
-                )
+                logger.error(f"Twilio call initiation error: {str(twilio_error)}")
                 raise  # Re-raise to be caught by outer exception handler
 
             if "error" in call_result:
@@ -256,12 +254,12 @@ class EvaluatorService:
                 return report
 
             call_sid = call_result["call_sid"]
-            logger.error(f"DEBUG: Call initiated with SID: {call_sid}")
+            logger.info(f"Call initiated with SID: {call_sid}")
 
             # Verify the test status is still waiting_for_call and explicitly set it if not
             if self.active_tests[test_id]["status"] != "waiting_for_call":
-                logger.error(
-                    f"DEBUG: Test status changed unexpectedly! Current status: {self.active_tests[test_id]['status']}"
+                logger.warning(
+                    f"Test status changed unexpectedly! Current status: {self.active_tests[test_id]['status']}"
                 )
                 # Force the status to be set correctly
                 self.active_tests[test_id]["status"] = "waiting_for_call"
@@ -272,7 +270,7 @@ class EvaluatorService:
                         "status": "waiting_for_call",
                     }
                 )
-                logger.error(f"DEBUG: Forced test status back to waiting_for_call")
+                logger.warning(f"Forced test status back to waiting_for_call")
 
                 # Update in DynamoDB
                 dynamodb_service.update_test_status(test_id, "waiting_for_call")
@@ -288,22 +286,15 @@ class EvaluatorService:
             )
 
             # Update in DynamoDB with call_sid and latest status
-            try:
-                self.active_tests[test_id]["call_sid"] = call_sid
-                dynamodb_service.save_test(test_id, self.active_tests[test_id])
-                logger.info(f"Updated test in DynamoDB with call_sid")
-            except Exception as ddb_error:
-                logger.error(
-                    f"DEBUG: Error updating DynamoDB with call_sid: {str(ddb_error)}"
-                )
+            self.active_tests[test_id]["call_sid"] = call_sid
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+            logger.info(f"Updated test in DynamoDB with call_sid")
 
             # Log status again to confirm
-            logger.error(
-                f"DEBUG: Test status after call initiated: {self.active_tests[test_id]['status']}"
+            logger.debug(
+                f"Test status after call initiated: {self.active_tests[test_id]['status']}"
             )
-            logger.error(
-                f"DEBUG: Test {test_id} is waiting for call with call_sid: {call_sid}"
-            )
+            logger.info(f"Test {test_id} is waiting for call with call_sid: {call_sid}")
 
             # Update test with call information
             if "calls" not in self.active_tests[test_id]:
@@ -315,13 +306,12 @@ class EvaluatorService:
             }
 
             # Update in DynamoDB again to ensure all data is saved
-            try:
-                dynamodb_service.save_test(test_id, self.active_tests[test_id])
-                logger.error(f"DEBUG: Final test data update to DynamoDB complete")
-            except Exception as ddb_error:
-                logger.error(f"DEBUG: Error in final DynamoDB update: {str(ddb_error)}")
 
-            logger.error(f"DEBUG: Call initiated: {call_sid} for test {test_id}")
+            successful = dynamodb_service.save_test(test_id, self.active_tests[test_id])
+            if successful:
+                logger.info(f"Final test data update to DynamoDB complete")
+            else:
+                logger.error(f"Error in final DynamoDB update for test {test_id}")
 
             # Save initial report
             report_id = str(report.id)
