@@ -135,47 +135,14 @@ class TwilioService:
             # Get outbound number
             from_number = self.get_outbound_number()
             logger.info(f"Using outbound number: {from_number}")
-
-            # Get callback URL from config
-            callback_url = self.callback_url
-
-            logger.debug(f"Using callback URL: {callback_url}")
+            logger.debug(f"Using callback URL: {self.callback_url}")
 
             # Import at function level to avoid circular imports
             from ..services.evaluator import evaluator_service
 
             # Check if the test exists in active_tests before attempting to update
-            if test_id in evaluator_service.active_tests:
-                previous_status = evaluator_service.active_tests[test_id].get(
-                    "status", "unknown"
-                )
-                evaluator_service.active_tests[test_id]["status"] = "waiting_for_call"
-                logger.info(
-                    f"Updated test {test_id} status from {previous_status} to waiting_for_call"
-                )
 
-                # Also update in DynamoDB
-                from ..services.dynamodb_service import dynamodb_service
-
-                dynamodb_service.update_test_status(test_id, "waiting_for_call")
-                dynamodb_service.save_test(
-                    test_id, evaluator_service.active_tests[test_id]
-                )
-                logger.debug(f"Updated test status in DynamoDB to waiting_for_call")
-            else:
-                # This is a critical error - the test should exist in active_tests
-                logger.error(
-                    f"CRITICAL ERROR - Test {test_id} not found in active_tests before call initiation"
-                )
-                # Check all active tests
-                logger.error(
-                    f"Active tests: {list(evaluator_service.active_tests.keys())}"
-                )
-                return {
-                    "error": f"Test {test_id} not found in active tests",
-                    "test_id": test_id,
-                    "status": "failed",
-                }
+            from ..services.dynamodb_service import dynamodb_service
 
             # Create a simple TwiML for call initiation with better logging
             response = VoiceResponse()
@@ -186,10 +153,12 @@ class TwilioService:
 
             # Set up call parameters - ensure test_id is passed in multiple places
             status_callback_url = (
-                f"{callback_url}/webhooks/call-status?test_id={test_id}"
+                f"{self.callback_url}/webhooks/call-status?test_id={test_id}"
             )
-            call_started_url = f"{callback_url}/webhooks/call-started?test_id={test_id}"
-
+            call_started_url = (
+                f"{self.callback_url}/webhooks/call-started?test_id={test_id}"
+            )
+            media_stream_url = f"{self.callback_url}/media-stream?test_id={test_id}"
             logger.info(f"Status callback URL: {status_callback_url}")
             logger.info(f"Call started URL: {call_started_url}")
 
@@ -198,22 +167,9 @@ class TwilioService:
                 logger.info(
                     f"Initiating call to {self.ai_service_number} from {from_number}"
                 )
-
-                # Log Twilio account info (masked)
-                account_sid_masked = (
-                    f"{self.account_sid[:5]}...{self.account_sid[-5:]}"
-                    if len(self.account_sid) > 10
-                    else "***"
-                )
-                auth_token_masked = (
-                    f"{self.auth_token[:3]}...{self.auth_token[-3:]}"
-                    if len(self.auth_token) > 6
-                    else "***"
-                )
-                logger.debug(
-                    f"Using Twilio account: {account_sid_masked}, auth: {auth_token_masked}"
-                )
-
+                # CALL STARTS HERE
+                connect = Connect()
+                stream = ()
                 # Create the call with all parameters
                 call = self.client.calls.create(
                     to=self.ai_service_number,
@@ -221,14 +177,14 @@ class TwilioService:
                     twiml=str(response),
                     status_callback=status_callback_url,
                     status_callback_event=[
-                        "queued",
+                        # "queued",
                         "initiated",
                         "ringing",
                         "answered",
                         "completed",
                     ],
                     status_callback_method="POST",
-                    url=call_started_url,
+                    url=media_stream_url,
                     method="POST",
                     # Add test_id as a parameter in multiple places to ensure it's available
                     machine_detection="Enable",
@@ -293,35 +249,12 @@ class TwilioService:
 
     def get_outbound_number(self) -> str:
         """Get an available Twilio number for outbound calling."""
-        try:
-            # Get first available phone number from account
-            incoming_phone_numbers = self.client.incoming_phone_numbers.list(limit=1)
-            if incoming_phone_numbers:
-                return incoming_phone_numbers[0].phone_number
-            else:
-                # Fallback to default number
-                default_number = config.get_parameter("/twilio/phone_number")
-                logger.error(f"Using default outbound number: {default_number}")
-                return default_number
-        except Exception as e:
-            logger.error(f"Error getting outbound number: {str(e)}")
-            default_number = config.get_parameter("/twilio/phone_number")
-            logger.error(f"Falling back to default outbound number: {default_number}")
-            return default_number
-
-    def get_outbound_number(self) -> str:
-        """Get an available Twilio number for outbound calling."""
-        try:
-            # Get first available phone number from account
-            incoming_phone_numbers = self.client.incoming_phone_numbers.list(limit=1)
-            if incoming_phone_numbers:
-                return incoming_phone_numbers[0].phone_number
-            else:
-                # Fallback to default number
-                return config.get_parameter("/twilio/phone_number")
-        except Exception as e:
-            logger.error(f"Error getting outbound number: {str(e)}")
-            return config.get_parameter("/twilio/phone_number")
+        # Get first available phone number from account
+        incoming_phone_numbers = self.client.incoming_phone_numbers.list(limit=1)
+        if incoming_phone_numbers:
+            return incoming_phone_numbers[0].phone_number
+        else:
+            raise ValueError("No phone numbers available")
 
     def get_call_status(self, call_sid: str) -> Dict[str, Any]:
         """Get status of a call by SID."""
