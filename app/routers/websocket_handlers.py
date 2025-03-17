@@ -120,58 +120,6 @@ async def connect_to_openai(test_id: str, client) -> websockets.WebSocketClientP
         raise
 
 
-async def process_outgoing_audio(
-    websocket: WebSocket,
-    openai_ws: websockets.WebSocketClientProtocol,
-    call_sid: str,
-    test_id: str,
-):
-    """Process outgoing audio from OpenAI and send to Twilio"""
-    stream_sid = None
-
-    try:
-        async for openai_message in openai_ws:
-            response = json.loads(openai_message)
-
-            if response.get("type") == "response.audio.delta" and "delta" in response:
-                # Extract stream_sid from connection data or existing messages
-                if not stream_sid:
-                    # Look for stream_sid in active connections
-                    connection_id = f"{call_sid}_{test_id}"
-                    if connection_id in active_connections:
-                        stream_sid = active_connections[connection_id].get("stream_sid")
-                        logger.info("stream_sid not found")
-
-                if stream_sid:
-                    audio_payload = response["delta"]
-                    audio_delta = {
-                        "event": "media",
-                        "streamSid": stream_sid,
-                        "media": {"payload": audio_payload},
-                    }
-                    await websocket.send_json(audio_delta)
-                else:
-                    logger.warning("No stream_sid available for response")
-
-            elif response.get("type") == "input_audio_buffer.transcription":
-                text = response.get("text", "")
-                logger.error(f"Transcription: {text}")
-
-                # Record conversation turn
-                from app.services.evaluator import evaluator_service
-
-                evaluator_service.record_conversation_turn(
-                    test_id=test_id, call_sid=call_sid, speaker="agent", text=text
-                )
-    except WebSocketDisconnect:
-        logger.error("WebSocket disconnected during outgoing audio processing")
-    except Exception as e:
-        logger.error(f"Error processing outgoing audio: {str(e)}")
-        import traceback
-
-        logger.error(traceback.format_exc())
-
-
 async def handle_media_stream(websocket: WebSocket):
     """Handle a media stream WebSocket connections"""
     await websocket.accept()
@@ -353,6 +301,15 @@ async def update_stream_sid(connection_id: str, stream_sid: str):
 
 
 async def initialize_session(openai_ws):
+
+    # Import knowledge base
+    from app.services.evaluator import evaluator_service
+
+    # Get test data if available
+    test_data = {}
+    if test_id in evaluator_service.active_tests:
+        test_data = evaluator_service.active_tests[test_id]
+
     session_update = {
         "type": "session.update",
         "session": {
