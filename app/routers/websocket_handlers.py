@@ -235,7 +235,7 @@ async def connect_to_openai(test_id: str, client) -> websockets.WebSocketClientP
 
 
 async def handle_media_stream(websocket: WebSocket):
-    """Handle a media stream WebSocket connections"""
+    """WebSocket endpoint for media streaming."""
     await websocket.accept()
     logger.info("WebSocket connection established")
 
@@ -261,38 +261,6 @@ async def handle_media_stream(websocket: WebSocket):
     last_assistant_item = None
     mark_queue = []
     response_start_timestamp_twilio = None
-
-    # async def receive_from_twilio():
-    #     """receive from twilio send to openai"""
-    #     nonlocal stream_sid, latest_media_timestamp, test_id, call_sid, current_speaker, agent_turn_count
-    #     try:
-    #         agent_turn_count +=1
-    #         async for message in websocket.iter_text():
-    #             logger.error()
-    #             data = json.loads(message)
-    #             if data['event'] == 'media' and openai_ws.open:
-    #                 latest_media_timestamp = int(data['media']['timestamp'])
-    #                 audio_append = {
-    #                     "type": "input_audio_buffer.append",
-    #                     "audio": data['media']['payload']
-    #                 }
-    #                 await openai_ws.send(json.dumps(audio_append))
-    #             elif data['event'] == 'start':
-    #                 stream_sid = data['start']['streamSid']
-    #                 print(f"Incoming stream has started {stream_sid}")
-    #                 response_start_timestamp_twilio = None
-    #                 latest_media_timestamp = 0
-    #                 last_assistant_item = None
-    #             elif data['event'] == 'mark':
-    #                 if mark_queue:
-    #                     mark_queue.pop(0)
-    #     except WebSocketDisconnect:
-    #         logger.error("Client disconnected.")
-    #         if openai_ws.state == State.OPEN:
-    #             await openai_ws.close()
-
-    # async def send_to_twilio():
-    #     """receive from openai send audio back to twilio"""
 
     async def send_mark(connection, stream_sid):
         if stream_sid:
@@ -341,8 +309,8 @@ async def handle_media_stream(websocket: WebSocket):
                 "OpenAI-Beta": "realtime=v1",
             },
         ) as openai_ws:
-            # Initialize the session
-            await initialize_session(openai_ws)
+            # Initialize the session with a default prompt (we don't have test_id yet)
+            await initialize_session(openai_ws, test_id)
             logger.info("OpenAI session initialized")
 
             async def agent_audio():
@@ -704,11 +672,11 @@ async def handle_media_stream(websocket: WebSocket):
                     logger.error(f"Error in evaluator_audio: {e}")
                     import traceback
 
+                    logger.error(traceback.format_exc())
                 except WebSocketDisconnect:
                     logger.warning("Client disconnected.")
                     if openai_ws.state == State.OPEN:
                         await openai_ws.close()
-                    logger.error(traceback.format_exc())
 
             # Important - run both functions concurrently
             await asyncio.gather(agent_audio(), evaluator_audio())
@@ -861,11 +829,7 @@ async def initialize_session(openai_ws):
     await send_initial_conversation_item(openai_ws)
 
 
-def _create_system_prompt(
-    persona: Persona,
-    behavior: Behavior,
-    question: str,
-) -> str:
+def _create_system_prompt() -> str:
     """Create a system prompt based on persona, behavior, and question."""
     persona_traits = ", ".join(persona.traits)
     behavior_chars = ", ".join(behavior.characteristics)
