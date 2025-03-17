@@ -1,7 +1,7 @@
 # app/routers/reports.py
 import logging
 from fastapi import APIRouter, HTTPException, Depends, Query, Path, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 
@@ -217,45 +217,89 @@ async def get_presigned_audio_url(
     logger.info(f"Generating presigned URL for: {s3_url}")
 
     try:
-        # Parse the S3 URL
+        from ..services.s3_service import s3_service
+
+        # Validate S3 URL format
         if not s3_url.startswith("s3://"):
+            logger.error(f"Invalid S3 URL format: {s3_url}")
             raise HTTPException(
                 status_code=400, detail="Invalid S3 URL format, must start with s3://"
             )
 
-        # Extract bucket and key from s3://bucket/key format
-        parts = s3_url.replace("s3://", "").split("/", 1)
-        if len(parts) != 2:
-            raise HTTPException(
-                status_code=400, detail="Invalid S3 URL format, must be s3://bucket/key"
-            )
-
-        bucket = parts[0]
-        key = parts[1]
-
         # Generate presigned URL
         presigned_url = s3_service.generate_presigned_url(
-            key, expiration=3600  # URL valid for 1 hour
+            s3_url, expiration=3600  # URL valid for 1 hour
         )
 
         if not presigned_url:
+            logger.error(f"Failed to generate presigned URL for {s3_url}")
             raise HTTPException(
-                status_code=404, detail="Failed to generate presigned URL"
+                status_code=404,
+                detail="Failed to generate presigned URL or object not found",
             )
 
-        # Determine content type
-        content_type = "audio/mpeg"  # Default for MP3
-        if key.endswith(".wav"):
-            content_type = "audio/wav"
-        elif key.endswith(".ogg"):
+        # Determine content type based on file extension
+        content_type = "audio/wav"  # Default for WAV
+        if s3_url.endswith(".mp3"):
+            content_type = "audio/mpeg"
+        elif s3_url.endswith(".ogg"):
             content_type = "audio/ogg"
 
         return {"url": presigned_url, "contentType": content_type}
 
     except Exception as e:
         logger.error(f"Error generating presigned URL: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=500, detail=f"Error generating presigned URL: {str(e)}"
+        )
+
+
+@router.get("/audio/{test_id}/{call_sid}/{filename}", response_class=FileResponse)
+async def get_audio_file(test_id: str, call_sid: str, filename: str):
+    """
+    Get an audio file directly from S3 and serve it to the client.
+
+    Args:
+        test_id: Test ID
+        call_sid: Call SID
+        filename: Audio filename
+
+    Returns:
+        Audio file as streaming response
+    """
+    try:
+        # Construct the S3 key
+        s3_key = f"tests/{test_id}/calls/{call_sid}/audio/{filename}"
+
+        logger.info(f"Attempting to retrieve audio file: {s3_key}")
+
+        # Get the file from S3
+        from ..services.s3_service import s3_service
+
+        try:
+            # Check if the file exists
+            s3_service.s3_client.head_object(Bucket=s3_service.bucket_name, Key=s3_key)
+        except Exception as e:
+            logger.error(f"Audio file does not exist: {str(e)}")
+            raise HTTPException(status_code=404, detail="Audio file not found")
+
+        # Generate a presigned URL with a short expiration
+        presigned_url = s3_service.generate_presigned_url(s3_key, expiration=300)
+
+        if not presigned_url:
+            logger.error(f"Failed to generate presigned URL for {s3_key}")
+            raise HTTPException(status_code=500, detail="Failed to generate audio URL")
+
+        # Redirect to the presigned URL
+        return RedirectResponse(url=presigned_url)
+
+    except Exception as e:
+        logger.error(f"Error retrieving audio file: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error retrieving audio file: {str(e)}"
         )
 
 

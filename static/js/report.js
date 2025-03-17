@@ -30,15 +30,41 @@ async function fetchReportData(reportId) {
         document.getElementById('loadingReport').style.display = 'flex';
         document.getElementById('reportContent').style.display = 'none';
         
+        console.log(`Fetching report data for ID: ${reportId}`);
+
         // Fetch report data from API
         const response = await fetch(`/api/reports/${reportId}`);
         
         if (!response.ok) {
-            throw new Error(`Error fetching report: ${response.statusText}`);
+          console.error(`Error response: ${response.status} ${response.statusText}`);
+          const errorText = await response.text();
+          console.error("Error response body:", errorText);
+          throw new Error(`Error fetching report: ${response.statusText}`);
         }
         
         const report = await response.json();
         
+        console.log('Report data received:', report);
+
+        // Check if we have questions_evaluated
+        if (!report.questions_evaluated || report.questions_evaluated.length === 0) {
+          console.warn("No questions_evaluated in report");
+          
+          // Create a default question if needed
+          if (!report.questions_evaluated) {
+            report.questions_evaluated = [{
+              question: "Default Question",
+              conversation: report.debug_conversation || [],
+              metrics: report.overall_metrics || {
+                accuracy: 0,
+                empathy: 0,
+                response_time: 0,
+                successful: false
+              }
+            }];
+            console.log("Added default question with conversation:", report.questions_evaluated[0]);
+          }
+        }
         // Populate report details
         populateReportDetails(report);
         
@@ -64,29 +90,46 @@ function showError(message) {
 }
 
 // Populate report details
+// Check for full recording in populateReportDetails function
 function populateReportDetails(report) {
-    // Set title and metadata
-    document.getElementById('reportTitle').textContent = report.test_case_name;
-    document.getElementById('personaBadge').textContent = report.persona_name;
-    document.getElementById('behaviorBadge').textContent = report.behavior_name;
+  // ... (existing code)
+  
+  // Set special instructions if any
+  if (report.special_instructions) {
+    document.getElementById('specialInstructions').textContent = report.special_instructions;
+    document.getElementById('specialInstructionsCard').style.display = 'block';
+  } else {
+    document.getElementById('specialInstructionsCard').style.display = 'none';
+  }
+  
+  // Handle full recording if available
+  if (report.full_recording_url) {
+    document.getElementById('fullRecordingCard').style.display = 'block';
     
-    // Set overall metrics
-    const metrics = report.overall_metrics;
-    document.getElementById('overallAccuracy').textContent = `${Math.round(metrics.accuracy * 100)}%`;
-    document.getElementById('overallEmpathy').textContent = `${Math.round(metrics.empathy * 100)}%`;
-    document.getElementById('avgResponseTime').textContent = `${metrics.response_time.toFixed(2)}s`;
-    document.getElementById('executionTime').textContent = `${report.execution_time.toFixed(2)}s`;
-    
-    // Set special instructions if any
-    if (report.special_instructions) {
-        document.getElementById('specialInstructions').textContent = report.special_instructions;
-        document.getElementById('specialInstructionsCard').style.display = 'block';
-    } else {
-        document.getElementById('specialInstructionsCard').style.display = 'none';
-    }
-    
-    // Populate questions
-    populateQuestions(report.questions_evaluated);
+    // Process the S3 URL to get a presigned URL
+    (async () => {
+      try {
+        const presignedUrl = await fetchPresignedUrl(report.full_recording_url);
+        if (presignedUrl) {
+          const audioEl = document.getElementById('fullRecording');
+          audioEl.src = presignedUrl;
+          document.getElementById('fullRecordingLoading').style.display = 'none';
+        } else {
+          document.getElementById('fullRecordingLoading').innerHTML = 
+            '<div class="audio-error">Audio unavailable</div>';
+        }
+      } catch (error) {
+        console.error('Error loading full recording:', error);
+        document.getElementById('fullRecordingLoading').innerHTML = 
+          '<div class="audio-error">Error loading audio</div>';
+      }
+    })();
+  } else {
+    document.getElementById('fullRecordingCard').style.display = 'none';
+  }
+  
+  // Populate questions
+  populateQuestions(report.questions_evaluated);
 }
 
 // Populate questions
@@ -120,38 +163,24 @@ function populateQuestions(questions) {
     });
 }
 
-// Populate conversation turns
-function populateConversation(conversation, container) {
-    container.innerHTML = '';
+async function fetchPresignedUrl(s3Url) {
+  try {
+    // Encode the S3 URL properly
+    const encodedUrl = encodeURIComponent(s3Url);
     
-    conversation.forEach((turn, index) => {
-        const turnTemplate = document.getElementById('turnTemplate').content.cloneNode(true);
-        const turnElement = turnTemplate.querySelector('.conversation-turn');
-        
-        // Set speaker and text
-        turnElement.querySelector('.speaker-label').textContent = capitalizeFirstLetter(turn.speaker);
-        turnElement.querySelector('.turn-text').textContent = turn.text;
-        
-        // Add appropriate class based on speaker
-        turnElement.classList.add(`turn-${turn.speaker}`);
-        
-        // Set audio if available
-        const audioPlayer = turnElement.querySelector('.audio-player');
-        if (turn.audio_url) {
-            // Convert S3 URL to public URL if needed
-            let audioUrl = turn.audio_url;
-            if (audioUrl.startsWith('s3://')) {
-                // Request a presigned URL from the server
-                fetchPresignedUrl(audioUrl, audioPlayer);
-            } else {
-                audioPlayer.src = audioUrl;
-            }
-        } else {
-            audioPlayer.style.display = 'none';
-        }
-        
-        container.appendChild(turnElement);
-    });
+    // Request presigned URL from server
+    const response = await fetch(`/api/reports/presigned-audio-url?s3_url=${encodedUrl}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get presigned URL: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    return data.url;
+  } catch (error) {
+    console.error('Error fetching presigned URL:', error);
+    return null;
+  }
 }
 
 // Fetch a presigned URL for S3 objects
@@ -296,11 +325,15 @@ async function loadAudioForConversation() {
     }
   });
   
-  // Modify your populateConversation function to include S3 URL data attributes
   function populateConversation(conversation, container) {
     container.innerHTML = '';
-    
+    console.log("Populating conversation:", conversation);
+    if (!conversation || conversation.length === 0) {
+      container.innerHTML = '<div class="alert alert-warning">No conversation data available</div>';
+      return;
+    }
     conversation.forEach((turn, index) => {
+      console.log(`Turn ${index}:`, turn);
       const turnTemplate = document.getElementById('turnTemplate').content.cloneNode(true);
       const turnElement = turnTemplate.querySelector('.conversation-turn');
       
@@ -314,15 +347,111 @@ async function loadAudioForConversation() {
       // Set audio if available
       const audioPlayer = turnElement.querySelector('.audio-player');
       if (turn.audio_url) {
-        // Store the S3 URL as a data attribute
-        audioPlayer.setAttribute('data-s3-url', turn.audio_url);
+        // Add more visible loading indicator with retry option
+        const loadingIndicator = document.createElement('div');
+        loadingIndicator.className = 'audio-loading';
+        loadingIndicator.innerHTML = '<div class="spinner"></div><span>Loading audio...</span>';
+        turnElement.appendChild(loadingIndicator);
         
-        // Don't set src yet - we'll fetch presigned URLs later
-        audioPlayer.style.display = 'none'; // Hide until loaded
+        // Retry logic for audio loading
+        (async () => {
+          try {
+            let audioUrl = turn.audio_url;
+            
+            // Convert S3 URL to presigned URL if needed
+            if (audioUrl.startsWith('s3://')) {
+              console.log(`Getting presigned URL for: ${audioUrl}`);
+              const presignedUrl = await fetchPresignedUrl(audioUrl);
+              console.log(`Got presigned URL: ${presignedUrl ? presignedUrl.substring(0, 100) + '...' : 'null'}`);
+              
+              if (presignedUrl) {
+                audioPlayer.src = presignedUrl;
+                audioPlayer.style.display = 'block';
+                
+                // Add event listeners for debugging
+                audioPlayer.addEventListener('error', (e) => {
+                  console.error('Audio player error:', e);
+                  console.error('Error code:', audioPlayer.error?.code);
+                  console.error('Error message:', audioPlayer.error?.message);
+                  
+                  // Show error message in UI
+                  loadingIndicator.innerHTML = `<div class="audio-error">Error: ${audioPlayer.error?.message || 'Could not play audio'}</div>`;
+                });
+                
+                audioPlayer.addEventListener('loadeddata', () => {
+                  console.log('Audio loaded successfully');
+                  loadingIndicator.remove();
+                });
+              } else {
+                audioPlayer.style.display = 'none';
+                loadingIndicator.innerHTML = '<div class="audio-error">Could not retrieve audio URL</div>';
+              }
+            } else {
+              // Direct URL
+              audioPlayer.src = audioUrl;
+              audioPlayer.style.display = 'block';
+              
+              audioPlayer.addEventListener('loadeddata', () => {
+                loadingIndicator.remove();
+              });
+              
+              audioPlayer.addEventListener('error', () => {
+                loadingIndicator.innerHTML = '<div class="audio-error">Could not load audio</div>';
+              });
+            }
+          } catch (error) {
+            console.error('Error loading audio:', error);
+            loadingIndicator.innerHTML = `<div class="audio-error">Error: ${error.message}</div>`;
+            audioPlayer.style.display = 'none';
+          }
+        })();
       } else {
+        console.log(`Turn ${index} has no audio URL`);
         audioPlayer.style.display = 'none';
       }
       
       container.appendChild(turnElement);
     });
   }
+
+  async function loadConversationAudio() {
+    const audioElements = document.querySelectorAll('audio[data-s3-url]');
+    
+    if (audioElements.length === 0) {
+      console.log('No S3 audio URLs found in report');
+      return;
+    }
+    
+    console.log(`Found ${audioElements.length} audio elements with S3 URLs`);
+    
+    // Process each audio element
+    for (const audioEl of audioElements) {
+      const s3Url = audioEl.getAttribute('data-s3-url');
+      if (!s3Url) continue;
+      
+      try {
+        // Use the presigned URL function
+        const presignedUrl = await fetchPresignedUrl(s3Url);
+        if (presignedUrl) {
+          audioEl.src = presignedUrl;
+          audioEl.style.display = 'block';
+        }
+      } catch (error) {
+        console.error(`Error loading audio: ${error.message}`);
+      }
+    }
+  }
+  
+  // Call this after populating the report
+  document.addEventListener('DOMContentLoaded', function() {
+    // Get report ID from URL
+    const reportId = getReportIdFromUrl();
+    
+    if (reportId) {
+      // Fetch report data
+      fetchReportData(reportId).then(() => {
+        // After report is loaded, ensure audio is loaded too
+        setTimeout(loadConversationAudio, 500);
+      });
+    }
+  });

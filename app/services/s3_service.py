@@ -31,7 +31,7 @@ class S3Service:
         speaker: str,
     ) -> str:
         """
-        Save audio data to S3.
+        Enhanced function to save audio data to S3 with improved error handling.
 
         Args:
             audio_data: Audio data as bytes or file-like object
@@ -44,27 +44,46 @@ class S3Service:
             S3 URL for the saved audio
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        key = f"tests/{test_id}/calls/{call_sid}/audio/{turn_number}_{speaker}_{timestamp}.wav"
+        filename = f"{turn_number}_{speaker}_{timestamp}.wav"
+        key = f"tests/{test_id}/calls/{call_sid}/audio/{filename}"
 
         try:
+            # Log what we're trying to do
+            logger.info(f"Saving audio to S3: bucket={self.bucket_name}, key={key}")
+
+            # Make sure the audio data is valid
             if isinstance(audio_data, bytes):
+                if len(audio_data) == 0:
+                    logger.warning("Empty audio data provided, not saving to S3")
+                    return ""
+
+                # Upload the data
                 self.s3_client.put_object(
                     Bucket=self.bucket_name,
                     Key=key,
                     Body=audio_data,
                     ContentType="audio/wav",
                 )
+                logger.info(f"Successfully saved {len(audio_data)} bytes of audio data")
             else:
+                # File-like object
                 self.s3_client.upload_fileobj(
                     audio_data,
                     self.bucket_name,
                     key,
                     ExtraArgs={"ContentType": "audio/wav"},
                 )
+                logger.info("Successfully saved audio file")
 
-            return f"s3://{self.bucket_name}/{key}"
-        except ClientError as e:
+            # Return S3 URL
+            s3_url = f"s3://{self.bucket_name}/{key}"
+            logger.info(f"Audio saved to: {s3_url}")
+            return s3_url
+        except Exception as e:
             logger.error(f"Error saving audio to S3: {str(e)}")
+            import traceback
+
+            logger.error(traceback.format_exc())
             return ""
 
     def save_recording(self, recording_url: str, test_id: str, call_sid: str) -> str:
@@ -331,7 +350,7 @@ class S3Service:
 
     def generate_presigned_url(self, key: str, expiration: int = 3600) -> str:
         """
-        Generate a presigned URL for an S3 object.
+        Generate a presigned URL for an S3 object with improved error handling.
 
         Args:
             key: S3 object key or full S3 URL
@@ -340,23 +359,45 @@ class S3Service:
         Returns:
             Presigned URL
         """
-        # Handle full S3 URLs
-        if key.startswith("s3://"):
-            parts = key.replace("s3://", "").split("/", 1)
-            bucket = parts[0]
-            key = parts[1]
-        else:
-            bucket = self.bucket_name
-
         try:
+            # Handle full S3 URLs
+            if key.startswith("s3://"):
+                parts = key.replace("s3://", "").split("/", 1)
+                bucket = parts[0]
+                key = parts[1]
+            else:
+                bucket = self.bucket_name
+
+            logger.info(f"Generating presigned URL for: bucket={bucket}, key={key}")
+
+            # First check if the object exists
+            try:
+                self.s3_client.head_object(Bucket=bucket, Key=key)
+            except Exception as e:
+                logger.error(f"S3 object does not exist: {str(e)}")
+                logger.error(f"  Bucket: {bucket}")
+                logger.error(f"  Key: {key}")
+                return ""
+
+            # Generate the URL
             url = self.s3_client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket, "Key": key},
+                Params={
+                    "Bucket": bucket,
+                    "Key": key,
+                    "ResponseContentType": "audio/wav",
+                    "ResponseContentDisposition": "inline",
+                },
                 ExpiresIn=expiration,
             )
+
+            logger.info(f"Generated presigned URL: {url[:100]}...")
             return url
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Error generating presigned URL: {str(e)}")
+            import traceback
+
+            logger.error(traceback.format_exc())
             return ""
 
 

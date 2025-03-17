@@ -24,7 +24,7 @@ class DynamoDBService:
         except ClientError as e:
             if e.response["Error"]["Code"] == "ResourceNotFoundException":
                 # Create the table
-                logger.error(f"DEBUG: Creating DynamoDB table {self.table_name}")
+                logger.info(f" Creating DynamoDB table {self.table_name}")
                 self.dynamodb.create_table(
                     TableName=self.table_name,
                     KeySchema=[{"AttributeName": "test_id", "KeyType": "HASH"}],
@@ -40,9 +40,8 @@ class DynamoDBService:
                 self.dynamodb.meta.client.get_waiter("table_exists").wait(
                     TableName=self.table_name
                 )
-                logger.error(f"DEBUG: Created DynamoDB table {self.table_name}")
             else:
-                logger.error(f"DEBUG: Error checking DynamoDB table: {str(e)}")
+                logger.error(f"Error checking DynamoDB table: {str(e)}")
                 raise
 
     def save_test(self, test_id: str, test_data: Dict[str, Any]) -> bool:
