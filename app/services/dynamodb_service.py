@@ -90,19 +90,19 @@ class DynamoDBService:
             The test data dictionary, or None if not found
         """
         try:
-            logger.error(f"DEBUG: Getting test {test_id} from DynamoDB")
+            logger.debug(f"Getting test {test_id} from DynamoDB")
             response = self.table.get_item(Key={"test_id": test_id})
 
             if "Item" not in response:
-                logger.error(f"DEBUG: Test {test_id} not found in DynamoDB")
+                logger.info(f"Test {test_id} not found in DynamoDB")
                 return None
 
             # Parse the stored JSON
             test_data = json.loads(response["Item"]["test_data"])
-            logger.error(f"DEBUG: Retrieved test {test_id} from DynamoDB")
+            logger.info(f"Retrieved test {test_id} from DynamoDB")
             return test_data
         except Exception as e:
-            logger.error(f"DEBUG: Error getting test from DynamoDB: {str(e)}")
+            logger.error(f"Error getting test from DynamoDB: {str(e)}")
             return None
 
     def update_test_status(self, test_id: str, status: str) -> bool:
@@ -130,43 +130,6 @@ class DynamoDBService:
         except Exception as e:
             logger.error(f"Error updating test status in DynamoDB: {str(e)}")
             return False
-
-    def get_waiting_tests(self) -> List[Dict[str, Any]]:
-        """
-        Get all tests with 'waiting_for_call' status.
-
-        Returns:
-            List of test data dictionaries
-        """
-        try:
-            logger.error(f"DEBUG: Getting waiting tests from DynamoDB")
-            response = self.table.scan(
-                FilterExpression="begins_with(#status, :status_prefix)",
-                ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={":status_prefix": "waiting"},
-            )
-
-            waiting_tests = []
-            for item in response.get("Items", []):
-                try:
-                    test_data = json.loads(item["test_data"])
-                    waiting_tests.append(
-                        {
-                            "test_id": item["test_id"],
-                            "test_data": test_data,
-                            "created_at": item.get("created_at", ""),
-                        }
-                    )
-                except Exception as parsing_error:
-                    logger.error(
-                        f"DEBUG: Error parsing test data: {str(parsing_error)}"
-                    )
-
-            logger.error(f"DEBUG: Found {len(waiting_tests)} waiting tests in DynamoDB")
-            return waiting_tests
-        except Exception as e:
-            logger.error(f"DEBUG: Error getting waiting tests from DynamoDB: {str(e)}")
-            return []
 
     def delete_test(self, test_id: str) -> bool:
         """

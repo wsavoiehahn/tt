@@ -14,6 +14,7 @@ from twilio.rest import Client
 from app.config import config
 from app.services.evaluator import evaluator_service
 from app.services.dynamodb_service import dynamodb_service
+from app.models.personas import Persona, Behavior
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -134,18 +135,6 @@ async def save_transcription(text, test_id, call_sid, speaker, turn_number=None)
                     # Also add the transcription URL
                     turn["transcription_url"] = s3_url
                     break
-
-            # If we didn't find a turn to update, add a new one
-            else:
-                new_turn = {
-                    "speaker": speaker,
-                    "text": text,
-                    "timestamp": datetime.now().isoformat(),
-                    "transcription_url": s3_url,
-                }
-                if "conversation" not in evaluator_service.active_tests[test_id]:
-                    evaluator_service.active_tests[test_id]["conversation"] = []
-                evaluator_service.active_tests[test_id]["conversation"].append(new_turn)
 
             # Save to DynamoDB
             from app.services.dynamodb_service import dynamodb_service
@@ -358,7 +347,7 @@ async def handle_media_stream(websocket: WebSocket):
 
             async def agent_audio():
                 """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
-                nonlocal stream_sid, latest_media_timestamp, call_sid, test_id, current_speaker
+                nonlocal stream_sid, latest_media_timestamp, call_sid, test_id, current_speaker, agent_turn_count
                 try:
                     async for message in websocket.iter_text():
                         from app.services.evaluator import evaluator_service
@@ -872,7 +861,32 @@ async def initialize_session(openai_ws):
     await send_initial_conversation_item(openai_ws)
 
 
+def _create_system_prompt(
+    persona: Persona,
+    behavior: Behavior,
+    question: str,
+) -> str:
+    """Create a system prompt based on persona, behavior, and question."""
+    persona_traits = ", ".join(persona.traits)
+    behavior_chars = ", ".join(behavior.characteristics)
+
+    return f"""
+        You are simulating a customer with the following persona: {persona.name}
+        Traits: {persona_traits}
+        
+        You are currently exhibiting the following behavior: {behavior.name}
+        Characteristics: {behavior_chars}
+        
+        You are calling an AI customer service agent.
+        You need to ask about the following question: "{question}"
+        
+        Use natural, conversational language appropriate for your persona and behavior.
+        Respond to the agent's questions and provide information as needed, but stay in character.
+        """
+
+
 async def send_initial_conversation_item(openai_ws):
+
     initial_conversation_item = {
         "type": "conversation.item.create",
         "item": {

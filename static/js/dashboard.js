@@ -577,7 +577,6 @@ async function createNewTest() {
     const questionInputs = document.querySelectorAll('.question-input');
     const questions = Array.from(questionInputs).map(input => ({
         text: input.value,
-        follow_ups: [],
     }));
     
     // Construct test case object

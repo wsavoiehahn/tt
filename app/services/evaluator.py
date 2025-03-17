@@ -6,11 +6,12 @@ import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
+import requests
 import tempfile
 import os
 
 from app.models.personas import Persona, Behavior
-from app.models.test_cases import TestCase, TestQuestion
+from app.models.test_cases import TestCase
 from app.models.reports import (
     ConversationTurn,
     EvaluationMetrics,
@@ -18,7 +19,6 @@ from app.models.reports import (
     TestCaseReport,
 )
 from app.config import config
-from .openai_service import openai_service
 from .twilio_service import twilio_service
 from .s3_service import s3_service
 
@@ -32,6 +32,16 @@ class EvaluatorService:
         self.active_tests = {}
         self.knowledge_base = config.load_knowledge_base()
         self.personas_data = config.load_personas()
+        self.api_key = os.environ.get("OPENAI_API_KEY")
+        self.realtime_url = "wss://api.openai.com/v1/realtime"
+        self.api_url = "https://api.openai.com/v1/chat/completions"
+        self.realtime_model = "gpt-4o-realtime-preview-2024-12-17"
+        self.evaluation_model = "gpt-4o-2024-05-13"
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "OpenAI-Beta": "realtime=v1",
+        }
 
     async def _wait_for_call_status(
         self, call_sid: str, target_statuses: List[str], timeout: int = 30
@@ -542,10 +552,9 @@ class EvaluatorService:
                 logger.info(f"Using question: {question_text}")
 
             # Evaluate the conversation
-            from ..services.openai_service import openai_service
 
             try:
-                metrics = await openai_service.evaluate_conversation(
+                metrics = await self.evaluate_conversation(
                     question=question_text,
                     conversation=[turn.dict() for turn in conversation_turns],
                     knowledge_base=self.knowledge_base,
@@ -685,7 +694,7 @@ class EvaluatorService:
                             response_time = time_diff
 
             # Use OpenAI to evaluate the conversation
-            metrics = await openai_service.evaluate_conversation(
+            metrics = await self.evaluate_conversation(
                 question=question,
                 conversation=[turn.dict() for turn in conversation],
                 knowledge_base=self.knowledge_base,
@@ -888,6 +897,127 @@ class EvaluatorService:
         else:
             logger.warning(f"Test {test_id} not found for recording conversation turn")
             return None
+
+    def _create_evaluation_prompt(
+        self,
+        question: str,
+        conversation: List[Dict[str, str]],
+        knowledge_base: Dict[str, Any],
+    ) -> str:
+        """Create an evaluation prompt based on the conversation and knowledge base."""
+        conversation_text = ""
+        for turn in conversation:
+            speaker = turn["speaker"]
+            text = turn["text"]
+            conversation_text += f"{speaker}: {text}\n\n"
+
+        # Extract relevant information from knowledge base
+        relevant_answer = ""
+        return f"""
+        Please evaluate this customer service conversation between an AI agent and a customer.
+        
+        Original customer question: "{question}"
+        
+        Conversation transcript:
+        {conversation_text}
+        
+        Relevant information from knowledge base:
+        {relevant_answer if relevant_answer else "Not specified"}
+        
+        Evaluate the conversation on the following metrics:
+        
+        1. Accuracy (0-1 scale): 
+           - Did the agent provide correct information based on the knowledge base?
+           - Did they address the customer's question completely?
+           - Did they avoid providing incorrect information?
+        
+        2. Empathy (0-1 scale):
+           - Did the agent acknowledge the customer's feelings and situation?
+           - Did they use appropriate tone and language for the customer's behavior?
+           - Did they show understanding and patience?
+        
+        3. Response time:
+           - Estimate the average response time in seconds (based on conversation flow)
+        
+        Provide your evaluation in JSON format with ratings and brief explanations:
+        
+        {{
+            "accuracy": 0.0-1.0,
+            "accuracy_explanation": "brief explanation",
+            "empathy": 0.0-1.0,
+            "empathy_explanation": "brief explanation",
+            "response_time": seconds,
+            "overall_feedback": "brief summary feedback"
+        }}
+        """
+
+    async def evaluate_conversation(
+        self,
+        question: str,
+        conversation: List[Dict[str, str]],
+        knowledge_base: Dict[str, Any],
+    ) -> EvaluationMetrics:
+        """
+        Evaluate a conversation using OpenAI.
+
+        Args:
+            question: The original question asked
+            conversation: List of conversation turns with speaker and text
+            knowledge_base: The knowledge base for reference
+
+        Returns:
+            EvaluationMetrics with accuracy and empathy scores
+        """
+        # Construct the prompt for evaluation
+        prompt = self._create_evaluation_prompt(question, conversation, knowledge_base)
+
+        response = requests.post(
+            self.api_url,
+            headers=self.headers,
+            json={
+                "model": self.evaluation_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are an expert evaluator of customer service AI agents.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.2,
+                "response_format": {"type": "json_object"},
+            },
+        )
+
+        if response.status_code != 200:
+            logger.error(f"Error in evaluation: {response.text}")
+            return EvaluationMetrics(
+                accuracy=0.0,
+                empathy=0.0,
+                response_time=0.0,
+                successful=False,
+                error_message=f"Evaluation failed with status {response.status_code}",
+            )
+
+        result = response.json()
+        content = result["choices"][0]["message"]["content"]
+        try:
+            evaluation = json.loads(content)
+
+            return EvaluationMetrics(
+                accuracy=float(evaluation.get("accuracy", 0.0)),
+                empathy=float(evaluation.get("empathy", 0.0)),
+                response_time=float(evaluation.get("response_time", 0.0)),
+                successful=True,
+            )
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Error parsing evaluation result: {str(e)}")
+            return EvaluationMetrics(
+                accuracy=0.0,
+                empathy=0.0,
+                response_time=0.0,
+                successful=False,
+                error_message=f"Failed to parse evaluation result: {str(e)}",
+            )
 
 
 # Create a singleton instance

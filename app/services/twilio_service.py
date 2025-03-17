@@ -146,12 +146,8 @@ class TwilioService:
             status_callback_url = (
                 f"{self.callback_url}/webhooks/call-status?test_id={test_id}"
             )
-            call_started_url = (
-                f"{self.callback_url}/webhooks/call-started?test_id={test_id}"
-            )
             websocket_url = os.environ.get("WEBSOCKET_ENDPOINT")
             logger.info(f"Status callback URL: {status_callback_url}")
-            logger.info(f"Call started URL: {call_started_url}")
 
             # Initiate the call with the simplified TwiML
             try:

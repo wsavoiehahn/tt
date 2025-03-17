@@ -54,39 +54,6 @@ async def debug_test(test_id: str):
     try:
         logger.info(f"Debug request for test {test_id}")
 
-        # Check active tests
-        from ..services.evaluator import evaluator_service
-
-        if test_id in evaluator_service.active_tests:
-            logger.info(f"Test {test_id} found in active_tests")
-            test_data = evaluator_service.active_tests[test_id]
-
-            # Copy and sanitize data for response
-            response_data = {
-                "status": test_data.get("status", "unknown"),
-                "call_sid": test_data.get("call_sid", "unknown"),
-                "start_time": test_data.get("start_time"),
-                "end_time": test_data.get("end_time"),
-                "conversation_count": len(test_data.get("conversation", [])),
-                "conversation_summary": [
-                    {
-                        "speaker": turn.get("speaker", "unknown"),
-                        "text": (
-                            turn.get("text", "")[:100] + "..."
-                            if turn.get("text")
-                            else ""
-                        ),
-                        "has_audio": "audio_url" in turn,
-                        "has_transcript": "transcription_url" in turn,
-                        "timestamp": turn.get("timestamp"),
-                    }
-                    for turn in test_data.get("conversation", [])
-                ],
-                "report_id": test_data.get("report_id"),
-            }
-
-            return response_data
-
         # If not in memory, check DynamoDB
         from ..services.dynamodb_service import dynamodb_service
 
