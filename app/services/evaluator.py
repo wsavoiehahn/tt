@@ -9,15 +9,15 @@ from typing import Dict, Any, List, Optional, Tuple
 import tempfile
 import os
 
-from ..models.personas import Persona, Behavior
-from ..models.test_cases import TestCase, TestQuestion
-from ..models.reports import (
+from app.models.personas import Persona, Behavior
+from app.models.test_cases import TestCase, TestQuestion
+from app.models.reports import (
     ConversationTurn,
     EvaluationMetrics,
     QuestionEvaluation,
     TestCaseReport,
 )
-from ..config import config
+from app.config import config
 from .openai_service import openai_service
 from .twilio_service import twilio_service
 from .s3_service import s3_service
@@ -99,7 +99,7 @@ class EvaluatorService:
             error: Error message
             action: Optional action description
         """
-        from ..services.dynamodb_service import dynamodb_service
+        from app.services.dynamodb_service import dynamodb_service
 
         self.active_tests[test_id]["status"] = "failed"
         self.active_tests[test_id]["error"] = error
@@ -179,7 +179,7 @@ class EvaluatorService:
         )
 
         # Also save to DynamoDB for persistence across Lambda executions
-        from ..services.dynamodb_service import dynamodb_service
+        from app.services.dynamodb_service import dynamodb_service
 
         # Make sure we're explicitly saving everything needed by the call initiation process
         dynamodb_service.save_test(test_id, self.active_tests[test_id])
@@ -342,47 +342,65 @@ class EvaluatorService:
         self, test_id: str, call_sid: str, conversation: List[Dict[str, Any]]
     ) -> None:
         """
-        Process a call after it has ended.
-
-        Args:
-            test_id: Test case ID
-            call_sid: Call SID
-            conversation: List of conversation turns
+        Process a call after it has ended with improved conversation handling.
         """
-        logger.error(f"DEBUG: Processing call for test {test_id}, call {call_sid}")
+        logger.info(f"Processing call for test {test_id}, call {call_sid}")
 
-        if test_id not in self.active_tests:
-            logger.error(
-                f"DEBUG: Test {test_id} not found in active tests, checking DynamoDB"
-            )
+        try:
+            if test_id not in self.active_tests:
+                logger.info(
+                    f"Test {test_id} not found in active tests, checking DynamoDB"
+                )
+                from .dynamodb_service import dynamodb_service
+
+                test_data = dynamodb_service.get_test(test_id)
+
+                if test_data:
+                    logger.info(f"Test {test_id} found in DynamoDB, loading")
+                    self.active_tests[test_id] = test_data
+                else:
+                    logger.error(f"Test {test_id} not found in DynamoDB")
+                    return
+
+            # Ensure we have conversation data
+            if not conversation or len(conversation) == 0:
+                logger.warning(f"No conversation data provided for test {test_id}")
+                # Check if we have conversation data in active_tests
+                if "conversation" in self.active_tests[test_id]:
+                    conversation = self.active_tests[test_id]["conversation"]
+                    logger.info(
+                        f"Using conversation data from active_tests: {len(conversation)} turns"
+                    )
+                else:
+                    logger.error(f"No conversation data available for test {test_id}")
+                    return
+
+            # Log conversation data for debugging
+            logger.info(f"Processing conversation with {len(conversation)} turns")
+
+            # Update test status
+            self.active_tests[test_id]["status"] = "processing"
+            self.active_tests[test_id]["call_sid"] = call_sid
+            self.active_tests[test_id]["end_time"] = time.time()
+
+            # Update in DynamoDB
             from .dynamodb_service import dynamodb_service
 
-            test_data = dynamodb_service.get_test(test_id)
+            dynamodb_service.update_test_status(test_id, "processing")
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
-            if test_data:
-                logger.error(
-                    f"DEBUG: Test {test_id} found in DynamoDB, loading into memory"
-                )
-                self.active_tests[test_id] = test_data
-            else:
-                logger.error(
-                    f"DEBUG: Test {test_id} not found in active tests or DynamoDB"
-                )
-                return
+            # Generate report
+            report = await self.generate_report_from_conversation(test_id, conversation)
+            logger.info(f"Generated report with ID: {report.id}")
 
-        # Update test status
-        self.active_tests[test_id]["status"] = "processing"
-        self.active_tests[test_id]["call_sid"] = call_sid
-        self.active_tests[test_id]["end_time"] = time.time()
+            # Update test with report ID
+            self.active_tests[test_id]["report_id"] = str(report.id)
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+        except Exception as e:
+            logger.error(f"Error processing call: {str(e)}")
+            import traceback
 
-        # Update in DynamoDB
-        from .dynamodb_service import dynamodb_service
-
-        dynamodb_service.update_test_status(test_id, "processing")
-        dynamodb_service.save_test(test_id, self.active_tests[test_id])
-
-        # Generate report
-        await self.generate_report_from_conversation(test_id, conversation)
+            logger.error(traceback.format_exc())
 
     async def generate_report_from_conversation(
         self, test_id: str, conversation: List[Dict[str, Any]]
@@ -393,9 +411,42 @@ class EvaluatorService:
         )
 
         try:
+            # Load test case data
             if test_id not in self.active_tests:
                 logger.error(f"Test {test_id} not found in active tests")
-                # Handle missing test case with defaults
+
+                # Try to load from DynamoDB
+                from .dynamodb_service import dynamodb_service
+
+                test_data = dynamodb_service.get_test(test_id)
+
+                if test_data:
+                    logger.info(f"Loaded test {test_id} from DynamoDB")
+                    self.active_tests[test_id] = test_data
+                else:
+                    logger.error(f"Test {test_id} not found in DynamoDB")
+                    # Create a default test case
+                    from ..models.test_cases import TestCase, TestCaseConfig
+
+                    test_case = TestCase(
+                        id=uuid.UUID(test_id),
+                        name="Unknown Test",
+                        config=TestCaseConfig(
+                            persona_name="Unknown",
+                            behavior_name="Unknown",
+                            questions=[],
+                        ),
+                    )
+
+            test_data = self.active_tests[test_id]
+
+            # Convert the test case dictionary to a TestCase object
+            from ..models.test_cases import TestCase
+
+            if isinstance(test_data.get("test_case"), dict):
+                test_case = TestCase(**test_data["test_case"])
+            else:
+                # Fallback to a default test case
                 from ..models.test_cases import TestCase, TestCaseConfig
 
                 test_case = TestCase(
@@ -407,38 +458,55 @@ class EvaluatorService:
                         questions=[],
                     ),
                 )
-            else:
-                test_data = self.active_tests[test_id]
-                test_case = TestCase(**test_data["test_case"])
 
-            logger.info(f"Using test case: {test_case.name}")
-            call_sid = test_data.get("call_sid", "unknown")
+            # Check for conversation turns, using the provided conversation or loading from the test data
+            if not conversation or len(conversation) == 0:
+                logger.info(f"No conversation provided, checking test data")
+                if "conversation" in test_data and test_data["conversation"]:
+                    conversation = test_data["conversation"]
+                    logger.info(f"Found {len(conversation)} turns in test data")
+                else:
+                    logger.error(f"No conversation found for test {test_id}")
+                    conversation = []
 
             # Calculate execution time
-            end_time = test_data.get("end_time", datetime.now())
-            if isinstance(end_time, str):
-                end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
-
+            end_time = test_data.get("end_time", time.time())
             start_time = test_data.get(
-                "start_time", datetime.now() - timedelta(minutes=5)
-            )
+                "start_time", time.time() - 300
+            )  # Default to 5 minutes ago
+
+            # Convert to numeric if needed
+            if isinstance(end_time, str):
+                try:
+                    from dateutil import parser
+
+                    end_time = parser.parse(end_time).timestamp()
+                except:
+                    end_time = time.time()
+
             if isinstance(start_time, str):
-                start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                try:
+                    from dateutil import parser
 
-            # Calculate execution time in seconds
-            if isinstance(end_time, datetime) and isinstance(start_time, datetime):
-                execution_time = (end_time - start_time).total_seconds()
-            else:
-                execution_time = 60.0  # Default 1 minute
+                    start_time = parser.parse(start_time).timestamp()
+                except:
+                    start_time = time.time() - 300
 
-            logger.info(f"Calculated execution time: {execution_time} seconds")
+            execution_time = end_time - start_time
 
-            # Process conversation turns to create standard objects
+            # Convert conversation turns to standard objects for OpenAI evaluation
+            from ..models.reports import ConversationTurn
+
             conversation_turns = []
-            for turn in conversation:
-                # Handle missing fields with defaults
-                speaker = turn.get("speaker", "unknown")
-                text = turn.get("text", "")
+
+            # Log conversation for debugging
+            logger.info(
+                f"Processing {len(conversation)} conversation turns for evaluation"
+            )
+            for i, turn in enumerate(conversation):
+                logger.info(
+                    f"Turn {i}: {turn.get('speaker')} - {turn.get('text', '')[:50]}..."
+                )
 
                 # Convert timestamp if needed
                 timestamp = turn.get("timestamp")
@@ -452,31 +520,18 @@ class EvaluatorService:
                 elif timestamp is None:
                     timestamp = datetime.now()
 
-                # Get audio URL if available
-                audio_url = turn.get("audio_url")
-
-                # Create conversation turn
                 conversation_turns.append(
                     ConversationTurn(
-                        speaker=speaker,
-                        text=text,
+                        speaker=turn.get("speaker", "unknown"),
+                        text=turn.get("text", ""),
                         timestamp=timestamp,
-                        audio_url=audio_url,
+                        audio_url=turn.get("audio_url"),
                     )
                 )
 
-            logger.info(f"Processed {len(conversation_turns)} conversation turns")
+            logger.info(f"Converted {len(conversation_turns)} conversation turns")
 
-            # Create some default metrics since evaluation is failing
-            default_metrics = EvaluationMetrics(
-                accuracy=0.75,  # Default 75%
-                empathy=0.75,  # Default 75%
-                response_time=2.0,  # Default 2 seconds
-                successful=True,  # Force success
-            )
-
-            # Create a question evaluation with the conversation
-            # Use the first question from the test case or a default
+            # Get question text
             question_text = "Default Question"
             if test_case.config.questions and len(test_case.config.questions) > 0:
                 first_q = test_case.config.questions[0]
@@ -484,35 +539,64 @@ class EvaluatorService:
                     question_text = first_q.text
                 elif isinstance(first_q, dict) and "text" in first_q:
                     question_text = first_q["text"]
+                logger.info(f"Using question: {question_text}")
+
+            # Evaluate the conversation
+            from ..services.openai_service import openai_service
+
+            try:
+                metrics = await openai_service.evaluate_conversation(
+                    question=question_text,
+                    conversation=[turn.dict() for turn in conversation_turns],
+                    knowledge_base=self.knowledge_base,
+                )
+                logger.info(f"Evaluation metrics: {metrics.dict()}")
+            except Exception as eval_error:
+                logger.error(f"Error evaluating conversation: {str(eval_error)}")
+                # Create default metrics with error
+                from ..models.reports import EvaluationMetrics
+
+                metrics = EvaluationMetrics(
+                    accuracy=0.5,
+                    empathy=0.5,
+                    response_time=3.0,
+                    successful=False,
+                    error_message=f"Evaluation error: {str(eval_error)}",
+                )
+
+            # Create question evaluation
+            from ..models.reports import QuestionEvaluation
 
             question_eval = QuestionEvaluation(
-                question=question_text,
-                conversation=conversation_turns,
-                metrics=default_metrics,
+                question=question_text, conversation=conversation_turns, metrics=metrics
             )
 
-            # Create report
+            # Create final report
+            from ..models.reports import TestCaseReport
+
             report = TestCaseReport(
                 test_case_id=test_case.id,
                 test_case_name=test_case.name,
                 persona_name=test_case.config.persona_name,
                 behavior_name=test_case.config.behavior_name,
-                questions_evaluated=[question_eval],  # Add the question evaluation here
-                overall_metrics=default_metrics,
+                questions_evaluated=[question_eval],
+                overall_metrics=metrics,
                 execution_time=execution_time,
                 special_instructions=test_case.config.special_instructions,
             )
 
             # Save report
-            report_id = str(report.id)
-            logger.info(f"Saving report {report_id}")
-
             from ..services.s3_service import s3_service
 
+            report_id = str(report.id)
             report_dict = report.dict()
 
-            # Explicitly add conversation to report for debugging
-            report_dict["debug_conversation"] = conversation
+            # Add debug info
+            report_dict["debug_info"] = {
+                "conversation_count": len(conversation),
+                "evaluation_time": datetime.now().isoformat(),
+                "has_knowledge_base": bool(self.knowledge_base),
+            }
 
             s3_service.save_report(report_dict, report_id)
             logger.info(
@@ -536,9 +620,8 @@ class EvaluatorService:
             logger.error(traceback.format_exc())
 
             # Generate a basic report even if there's an error
-            logger.info("Generating fallback report due to error")
+            from ..models.reports import TestCaseReport, EvaluationMetrics
 
-            # Create minimal report
             report = TestCaseReport(
                 test_case_id=uuid.UUID(test_id) if test_id else uuid.uuid4(),
                 test_case_name="Error Report",
@@ -744,22 +827,37 @@ class EvaluatorService:
     ):
         """
         Record a turn in the conversation with enhanced audio support.
-
-        Args:
-            test_id: Test case ID
-            call_sid: Call SID
-            speaker: Speaker identifier (evaluator or agent)
-            text: Text of the turn
-            audio_url: URL of the audio recording (optional)
-
-        Returns:
-            The created turn data
+        Only adds a new turn if it doesn't match the last turn for this speaker.
         """
         if test_id in self.active_tests:
             if "conversation" not in self.active_tests[test_id]:
                 self.active_tests[test_id]["conversation"] = []
 
-            # Create the turn data
+            # Check if we already have this turn (prevent duplication)
+            conversation = self.active_tests[test_id]["conversation"]
+
+            # Look for duplicate turns with same speaker and similar text
+            for turn in reversed(conversation):
+                if turn.get("speaker") == speaker and turn.get("text") and text:
+                    # Compare text similarity (simple check - first 10 chars)
+                    if turn["text"][:10] == text[:10]:
+                        # This appears to be a duplicate, just update with any new info
+                        if audio_url and not turn.get("audio_url"):
+                            turn["audio_url"] = audio_url
+                            logger.info(
+                                f"Updated existing turn with audio URL for {speaker}"
+                            )
+
+                            # Update in DynamoDB
+                            from app.services.dynamodb_service import dynamodb_service
+
+                            dynamodb_service.save_test(
+                                test_id, self.active_tests[test_id]
+                            )
+
+                        return turn  # Return the existing turn, no new turn created
+
+            # No duplicate found, create a new turn
             turn = {
                 "speaker": speaker,
                 "text": text,
@@ -767,7 +865,6 @@ class EvaluatorService:
             }
 
             if audio_url:
-                logger.info(f"Adding audio URL to turn: {audio_url}")
                 turn["audio_url"] = audio_url
 
             # Add to conversation
@@ -778,30 +875,14 @@ class EvaluatorService:
                 from app.services.dynamodb_service import dynamodb_service
 
                 dynamodb_service.save_test(test_id, self.active_tests[test_id])
-                logger.info(f"Saved conversation turn to DynamoDB for test {test_id}")
+                logger.info(
+                    f"Saved new conversation turn to DynamoDB for test {test_id}"
+                )
             except Exception as e:
                 logger.error(f"Error saving conversation turn to DynamoDB: {str(e)}")
                 import traceback
 
                 logger.error(f"Traceback: {traceback.format_exc()}")
-
-            # Broadcast update to websocket clients if available
-            try:
-                from app.routers.twilio_webhooks import broadcast_update
-                import asyncio
-
-                asyncio.create_task(
-                    broadcast_update(
-                        {
-                            "type": "conversation_update",
-                            "test_id": test_id,
-                            "call_sid": call_sid,
-                            "new_turn": turn,
-                        }
-                    )
-                )
-            except Exception as e:
-                logger.error(f"Error broadcasting conversation update: {str(e)}")
 
             return turn
         else:

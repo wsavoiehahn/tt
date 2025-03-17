@@ -46,6 +46,97 @@ async def create_test(test_case: TestCase, background_tasks: BackgroundTasks):
     }
 
 
+@router.get("/debug/{test_id}", response_model=Dict[str, Any])
+async def debug_test(test_id: str):
+    """
+    Debug endpoint to inspect test data.
+    """
+    try:
+        logger.info(f"Debug request for test {test_id}")
+
+        # Check active tests
+        from ..services.evaluator import evaluator_service
+
+        if test_id in evaluator_service.active_tests:
+            logger.info(f"Test {test_id} found in active_tests")
+            test_data = evaluator_service.active_tests[test_id]
+
+            # Copy and sanitize data for response
+            response_data = {
+                "status": test_data.get("status", "unknown"),
+                "call_sid": test_data.get("call_sid", "unknown"),
+                "start_time": test_data.get("start_time"),
+                "end_time": test_data.get("end_time"),
+                "conversation_count": len(test_data.get("conversation", [])),
+                "conversation_summary": [
+                    {
+                        "speaker": turn.get("speaker", "unknown"),
+                        "text": (
+                            turn.get("text", "")[:100] + "..."
+                            if turn.get("text")
+                            else ""
+                        ),
+                        "has_audio": "audio_url" in turn,
+                        "has_transcript": "transcription_url" in turn,
+                        "timestamp": turn.get("timestamp"),
+                    }
+                    for turn in test_data.get("conversation", [])
+                ],
+                "report_id": test_data.get("report_id"),
+            }
+
+            return response_data
+
+        # If not in memory, check DynamoDB
+        from ..services.dynamodb_service import dynamodb_service
+
+        test_data = dynamodb_service.get_test(test_id)
+        if test_data:
+            logger.info(f"Test {test_id} found in DynamoDB")
+
+            # Copy and sanitize data for response
+            response_data = {
+                "status": test_data.get("status", "unknown"),
+                "call_sid": test_data.get("call_sid", "unknown"),
+                "start_time": test_data.get("start_time"),
+                "end_time": test_data.get("end_time"),
+                "conversation_count": len(test_data.get("conversation", [])),
+                "conversation_summary": [
+                    {
+                        "speaker": turn.get("speaker", "unknown"),
+                        "text": (
+                            turn.get("text", "")[:100] + "..."
+                            if turn.get("text")
+                            else ""
+                        ),
+                        "has_audio": "audio_url" in turn,
+                        "has_transcript": "transcription_url" in turn,
+                        "timestamp": turn.get("timestamp"),
+                    }
+                    for turn in test_data.get("conversation", [])
+                ],
+                "report_id": test_data.get("report_id"),
+            }
+
+            return response_data
+
+        # Check S3 for test data
+        from ..services.s3_service import s3_service
+
+        test_data = s3_service.get_json(f"tests/{test_id}/config.json")
+        if test_data:
+            logger.info(f"Test {test_id} found in S3")
+            return {"source": "s3", "test_data": test_data}
+
+        return {"error": f"Test {test_id} not found"}
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        return {"error": str(e)}
+
+
 @router.post("/suite", response_model=Dict[str, Any])
 async def create_test_suite(test_suite: TestSuite, background_tasks: BackgroundTasks):
     """Create and execute a test suite (multiple test cases)."""

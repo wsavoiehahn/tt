@@ -136,7 +136,7 @@ class S3Service:
         speaker: str,
     ) -> str:
         """
-        Save a transcription to S3.
+        Save a transcription to S3 with improved error handling.
 
         Args:
             transcription: Text transcription
@@ -152,16 +152,46 @@ class S3Service:
         key = f"tests/{test_id}/calls/{call_sid}/transcripts/{turn_number}_{speaker}_{timestamp}.txt"
 
         try:
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=key,
-                Body=transcription.encode("utf-8"),
-                ContentType="text/plain",
+            # Log what we're trying to do
+            logger.info(
+                f"Saving transcription to S3: bucket={self.bucket_name}, key={key}"
             )
 
-            return f"s3://{self.bucket_name}/{key}"
-        except ClientError as e:
+            # Make sure transcription is not empty
+            if not transcription or len(transcription.strip()) == 0:
+                logger.warning("Empty transcription provided, not saving to S3")
+                return ""
+
+            # Ensure the transcription is properly encoded
+            transcription_bytes = transcription.encode("utf-8")
+
+            # Put the object with explicit error handling
+            try:
+                self.s3_client.put_object(
+                    Bucket=self.bucket_name,
+                    Key=key,
+                    Body=transcription_bytes,
+                    ContentType="text/plain",
+                )
+                logger.info(
+                    f"Successfully saved {len(transcription_bytes)} bytes of transcription data"
+                )
+            except Exception as upload_error:
+                logger.error(f"S3 upload error: {str(upload_error)}")
+                import traceback
+
+                logger.error(f"S3 upload traceback: {traceback.format_exc()}")
+                return ""
+
+            # Return S3 URL
+            s3_url = f"s3://{self.bucket_name}/{key}"
+            logger.info(f"Transcription saved to: {s3_url}")
+            return s3_url
+        except Exception as e:
             logger.error(f"Error saving transcription to S3: {str(e)}")
+            import traceback
+
+            logger.error(traceback.format_exc())
             return ""
 
     def save_report(self, report_data: Dict[str, Any], report_id: str) -> str:

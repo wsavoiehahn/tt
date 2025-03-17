@@ -12,6 +12,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 from typing import Dict, Any, Optional, List
 from twilio.rest import Client
 from app.config import config
+from app.services.evaluator import evaluator_service
+from app.services.dynamodb_service import dynamodb_service
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -78,8 +80,12 @@ async def save_audio_chunk(audio_data, test_id, call_sid, speaker, turn_number=N
 
 
 async def save_transcription(text, test_id, call_sid, speaker, turn_number=None):
-    """Save a transcription to S3 and return the S3 URL."""
+    """Save a transcription to S3 and return the S3 URL, with improved error handling."""
     try:
+        if not text or len(text.strip()) == 0:
+            logger.warning(f"Empty transcription provided for {speaker}")
+            return None
+
         from app.services.s3_service import s3_service
 
         # If turn_number is not provided, try to determine it
@@ -98,6 +104,7 @@ async def save_transcription(text, test_id, call_sid, speaker, turn_number=None)
                 turn_number = 0
 
         # Save the transcription to S3
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         s3_url = s3_service.save_transcription(
             transcription=text,
             test_id=test_id,
@@ -106,7 +113,45 @@ async def save_transcription(text, test_id, call_sid, speaker, turn_number=None)
             speaker=speaker,
         )
 
+        if not s3_url:
+            logger.error(f"Failed to save transcription to S3")
+            return None
+
         logger.info(f"Saved transcription to S3: {s3_url}")
+
+        # Also save to conversation directly
+        from app.services.evaluator import evaluator_service
+
+        if test_id in evaluator_service.active_tests:
+            # Look for the turn from this speaker without text
+            conversation = evaluator_service.active_tests[test_id].get(
+                "conversation", []
+            )
+            for turn in reversed(conversation):
+                if turn.get("speaker") == speaker and not turn.get("text"):
+                    # Update the turn with text
+                    turn["text"] = text
+                    # Also add the transcription URL
+                    turn["transcription_url"] = s3_url
+                    break
+
+            # If we didn't find a turn to update, add a new one
+            else:
+                new_turn = {
+                    "speaker": speaker,
+                    "text": text,
+                    "timestamp": datetime.now().isoformat(),
+                    "transcription_url": s3_url,
+                }
+                if "conversation" not in evaluator_service.active_tests[test_id]:
+                    evaluator_service.active_tests[test_id]["conversation"] = []
+                evaluator_service.active_tests[test_id]["conversation"].append(new_turn)
+
+            # Save to DynamoDB
+            from app.services.dynamodb_service import dynamodb_service
+
+            dynamodb_service.save_test(test_id, evaluator_service.active_tests[test_id])
+
         return s3_url
     except Exception as e:
         logger.error(f"Error saving transcription to S3: {str(e)}")
@@ -222,93 +267,165 @@ async def handle_media_stream(websocket: WebSocket):
     is_recording_full_conversation = True
     full_conversation_audio = bytearray()
 
-    async with websockets.connect(
-        "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
-        additional_headers={
-            "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
-            "OpenAI-Beta": "realtime=v1",
-        },
-    ) as openai_ws:
-        await initialize_session(openai_ws)
-        stream_sid = None
+    stream_sid = None
+    latest_media_timestamp = 0
+    last_assistant_item = None
+    mark_queue = []
+    response_start_timestamp_twilio = None
 
-        latest_media_timestamp = 0
-        last_assistant_item = None
-        mark_queue = []
-        response_start_timestamp_twilio = None
+    # async def receive_from_twilio():
+    #     """receive from twilio send to openai"""
+    #     nonlocal stream_sid, latest_media_timestamp, test_id, call_sid, current_speaker, agent_turn_count
+    #     try:
+    #         agent_turn_count +=1
+    #         async for message in websocket.iter_text():
+    #             logger.error()
+    #             data = json.loads(message)
+    #             if data['event'] == 'media' and openai_ws.open:
+    #                 latest_media_timestamp = int(data['media']['timestamp'])
+    #                 audio_append = {
+    #                     "type": "input_audio_buffer.append",
+    #                     "audio": data['media']['payload']
+    #                 }
+    #                 await openai_ws.send(json.dumps(audio_append))
+    #             elif data['event'] == 'start':
+    #                 stream_sid = data['start']['streamSid']
+    #                 print(f"Incoming stream has started {stream_sid}")
+    #                 response_start_timestamp_twilio = None
+    #                 latest_media_timestamp = 0
+    #                 last_assistant_item = None
+    #             elif data['event'] == 'mark':
+    #                 if mark_queue:
+    #                     mark_queue.pop(0)
+    #     except WebSocketDisconnect:
+    #         logger.error("Client disconnected.")
+    #         if openai_ws.state == State.OPEN:
+    #             await openai_ws.close()
 
-        async def agent_audio():
-            """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
-            nonlocal stream_sid, latest_media_timestamp, call_sid, test_id, current_speaker
-            try:
-                async for message in websocket.iter_text():
-                    data = json.loads(message)
-                    if data["event"] == "media" and openai_ws.state == State.OPEN:
-                        current_speaker = "agent"
-                        audio_payload = data["media"]["payload"]
-                        try:
-                            audio_bytes = base64.b64decode(audio_payload)
-                            # Append to agent audio buffer
-                            agent_audio_buffer.extend(audio_bytes)
-                        except:
-                            logger.error("Error decoding audio payload")
-                        audio_append = {
-                            "type": "input_audio_buffer.append",
-                            "audio": audio_payload,
-                        }
-                        await openai_ws.send(json.dumps(audio_append))
+    # async def send_to_twilio():
+    #     """receive from openai send audio back to twilio"""
 
-                    elif data["event"] == "start":
-                        stream_sid = data["start"]["streamSid"]
-                        logger.info(f"Incoming stream has started {stream_sid}")
-                        latest_media_timestamp = 0
-                        last_assistant_item = None
-                        response_start_timestamp_twilio = None
-                        call_sid = data["start"]["callSid"]
-                        logger.info(f"callersid:{call_sid}")
-                        custom_parameters = data["start"].get("customParameters", {})
-                        test_id = custom_parameters.get("test_id")
-                        if test_id:
-                            from app.services.evaluator import evaluator_service
+    async def send_mark(connection, stream_sid):
+        if stream_sid:
+            mark_event = {
+                "event": "mark",
+                "streamSid": stream_sid,
+                "mark": {"name": "responsePart"},
+            }
+            await connection.send_json(mark_event)
+            mark_queue.append("responsePart")
+
+    async def handle_speech_started_event():
+        nonlocal response_start_timestamp_twilio, last_assistant_item
+        logging.info("Handling speech started event.")
+        if mark_queue and response_start_timestamp_twilio is not None:
+            elapsed_time = latest_media_timestamp - response_start_timestamp_twilio
+
+            logger.info(
+                f"Calculating elapsed time for truncation: {latest_media_timestamp} - {response_start_timestamp_twilio} = {elapsed_time}ms"
+            )
+            if last_assistant_item:
+                logger.info(
+                    f"Truncating item with ID: {last_assistant_item}, Truncated at: {elapsed_time}ms"
+                )
+
+                truncate_event = {
+                    "type": "conversation.item.truncate",
+                    "item_id": last_assistant_item,
+                    "content_index": 0,
+                    "audio_end_ms": elapsed_time,
+                }
+                await openai_ws.send(json.dumps(truncate_event))
+
+            await websocket.send_json({"event": "clear", "streamSid": stream_sid})
+
+            mark_queue.clear()
+            last_assistant_item = None
+            response_start_timestamp_twilio = None
+
+    try:
+        # Connect to OpenAI
+        async with websockets.connect(
+            "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
+            additional_headers={
+                "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
+                "OpenAI-Beta": "realtime=v1",
+            },
+        ) as openai_ws:
+            # Initialize the session
+            await initialize_session(openai_ws)
+            logger.info("OpenAI session initialized")
+
+            async def agent_audio():
+                """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
+                nonlocal stream_sid, latest_media_timestamp, call_sid, test_id, current_speaker
+                try:
+                    async for message in websocket.iter_text():
+                        from app.services.evaluator import evaluator_service
+
+                        data = json.loads(message)
+                        if data["event"] == "media" and openai_ws.state == State.OPEN:
+                            current_speaker = "agent"
+                            audio_payload = data["media"]["payload"]
+                            try:
+                                audio_bytes = base64.b64decode(audio_payload)
+                                # Append to agent audio buffer
+                                agent_audio_buffer.extend(audio_bytes)
+                            except:
+                                logger.error("Error decoding audio payload")
+                            audio_append = {
+                                "type": "input_audio_buffer.append",
+                                "audio": audio_payload,
+                            }
+                            await openai_ws.send(json.dumps(audio_append))
+                        elif data["event"] == "start":
+                            stream_sid = data["start"]["streamSid"]
+                            call_sid = data["start"]["callSid"]
+                            test_id = (
+                                data["start"].get("customParameters", {}).get("test_id")
+                            )
+                            client.calls(call_sid).recordings.create()
+                            logger.info(
+                                f"Incoming stream has started stream_sid: {stream_sid}, call_sid: {call_sid}, test_id:{test_id}"
+                            )
+                            latest_media_timestamp = 0
+                            last_assistant_item = None
+                            response_start_timestamp_twilio = None
 
                             if test_id not in evaluator_service.active_tests:
                                 logger.warning(
                                     f"Test {test_id} not found in active_tests, initializing"
                                 )
-                                evaluator_service.active_tests[test_id] = {
+                                active_test = evaluator_service.active_tests[
+                                    test_id
+                                ] = {
                                     "status": "in_progress",
                                     "call_sid": call_sid,
                                     "start_time": datetime.now().isoformat(),
                                     "conversation": [],
                                 }
+                                dynamodb_service.save_test(test_id, active_test)
 
-                                # Update DynamoDB
-                                from app.services.dynamodb_service import (
-                                    dynamodb_service,
-                                )
-
-                                dynamodb_service.save_test(
-                                    test_id, evaluator_service.active_tests[test_id]
-                                )
-
-                        logger.info(
-                            f"Received start event: call_sid={call_sid}, test_id={test_id}"
-                        )
-                    elif data["event"] == "mark":
-                        if mark_queue:
-                            mark_queue.pop(0)
-                    elif data["event"] == "stop" and test_id and call_sid:
-                        # Save the accumulated agent audio
-                        if len(agent_audio_buffer) > 0:
-                            # Save agent's final audio
-                            s3_url = await save_audio_chunk(
-                                bytes(agent_audio_buffer), test_id, call_sid, "agent"
+                            logger.info(
+                                f"Received start event: call_sid={call_sid}, test_id={test_id}"
                             )
+                        elif data["event"] == "mark":
+                            if mark_queue:
+                                mark_queue.pop(0)
+                        elif data["event"] == "stop" and test_id and call_sid:
+                            logging.info("This only happens when I hangup the call")
 
-                            # Find the last agent turn and update with audio URL
-                            if s3_url:
-                                from app.services.evaluator import evaluator_service
-
+                            agent_turn_count += 1
+                            # Save the accumulated agent audio
+                            if len(agent_audio_buffer) > 0:
+                                # Save agent's final audio
+                                s3_url = await save_audio_chunk(
+                                    bytes(agent_audio_buffer),
+                                    test_id,
+                                    call_sid,
+                                    current_speaker,
+                                )
+                                # Find the last agent turn and update with audio URL
                                 if test_id in evaluator_service.active_tests:
                                     conversation = evaluator_service.active_tests[
                                         test_id
@@ -321,7 +438,97 @@ async def handle_media_stream(websocket: WebSocket):
                                             turn["audio_url"] = s3_url
                                             break
 
-                                    # Update in DynamoDB
+                                    dynamodb_service.save_test(
+                                        test_id,
+                                        evaluator_service.active_tests[test_id],
+                                    )
+                except WebSocketDisconnect:
+                    logger.warning("Client disconnected.")
+                    if openai_ws.state == State.OPEN:
+                        await openai_ws.close()
+                except Exception as e:
+                    logger.error(f"Error in agent_audio: {str(e)}")
+                finally:
+                    logger.info(f"agent_audio task completed for call {call_sid}")
+
+            async def evaluator_audio():
+                """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
+                nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio, test_id
+                nonlocal current_speaker, evaluator_audio_buffer, full_conversation_audio
+                nonlocal evaluator_turn_count, agent_turn_count, last_transcription_time
+
+                response_text_buffer = ""
+
+                try:
+                    async for openai_message in openai_ws:
+                        response = json.loads(openai_message)
+                        if response["type"] in LOG_EVENT_TYPES:
+                            logger.info(f"Received event: {response['type']}")
+                        # Handle transcribed input from the agent
+                        if response.get("type") == "input_audio_buffer.transcription":
+                            current_speaker = "agent"  # Set correct speaker
+                            text = response.get("text", "")
+                            logger.error(f"Agent transcription: {text}")
+                            if test_id and text and len(text.strip()) > 0:
+                                # Save the transcription
+                                transcript_url = await save_transcription(
+                                    text,
+                                    test_id,
+                                    call_sid,
+                                    "agent",  # Use explicit "agent" here
+                                    agent_turn_count,
+                                )
+
+                                # Get the audio URL if we've accumulated audio data
+                                audio_url = None
+                                if len(agent_audio_buffer) > 100:
+                                    # Save the audio chunk
+                                    audio_url = await save_audio_chunk(
+                                        bytes(agent_audio_buffer),
+                                        test_id,
+                                        call_sid,
+                                        "agent",  # Use explicit "agent" here
+                                        agent_turn_count,
+                                    )
+
+                                    # Also add to full conversation recording
+                                    if is_recording_full_conversation:
+                                        full_conversation_audio.extend(
+                                            agent_audio_buffer
+                                        )
+
+                                    # Clear the buffer for the next chunk
+                                    agent_audio_buffer.clear()
+
+                                # Create single conversation turn with all data
+                                turn_data = {
+                                    "speaker": "agent",  # Explicitly use "agent"
+                                    "text": text,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "transcription_url": transcript_url,
+                                }
+
+                                if audio_url:
+                                    turn_data["audio_url"] = audio_url
+
+                                # Only save this turn ONCE to the conversation
+                                from app.services.evaluator import evaluator_service
+
+                                if test_id in evaluator_service.active_tests:
+                                    if (
+                                        "conversation"
+                                        not in evaluator_service.active_tests[test_id]
+                                    ):
+                                        evaluator_service.active_tests[test_id][
+                                            "conversation"
+                                        ] = []
+
+                                    # Add the turn directly to the conversation array
+                                    evaluator_service.active_tests[test_id][
+                                        "conversation"
+                                    ].append(turn_data)
+
+                                    # Save to DynamoDB
                                     from app.services.dynamodb_service import (
                                         dynamodb_service,
                                     )
@@ -329,345 +536,289 @@ async def handle_media_stream(websocket: WebSocket):
                                     dynamodb_service.save_test(
                                         test_id, evaluator_service.active_tests[test_id]
                                     )
-            except WebSocketDisconnect:
-                logger.warning("Client disconnected.")
-                if openai_ws.state == State.OPEN:
-                    await openai_ws.close()
-            except Exception as e:
-                logger.error(f"Error in agent_audio: {str(e)}")
-            finally:
-                logger.info(f"agent_audio task completed for call {call_sid}")
+                                    logger.info(
+                                        f"Saved agent turn to conversation: {text[:50]}..."
+                                    )
 
-        async def evaluator_audio():
-            nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio, test_id
-            nonlocal current_speaker, evaluator_audio_buffer, full_conversation_audio
-            nonlocal evaluator_turn_count, agent_turn_count, last_transcription_time
+                                # Update last transcription time
+                                last_transcription_time = datetime.now()
 
-            response_text_buffer = ""
+                        # Handle audio response from AI evaluator
+                        elif response[
+                            "type"
+                        ] == "response.audio.delta" and response.get("delta"):
+                            try:
+                                # Set current speaker to evaluator - this is FROM OpenAI TO the call
+                                current_speaker = "evaluator"
 
-            try:
-                async for openai_message in openai_ws:
-                    response = json.loads(openai_message)
+                                # Decode audio data
+                                audio_payload = base64.b64decode(response["delta"])
 
-                    if response["type"] in LOG_EVENT_TYPES:
-                        logger.info(f"Received event: {response['type']}")
+                                # Accumulate evaluator audio data
+                                evaluator_audio_buffer.extend(audio_payload)
 
-                    # Handle transcribed input from the agent
-                    if response.get("type") == "input_audio_buffer.transcription":
-                        text = response.get("text", "")
-                        logger.info(f"Agent transcription: {text}")
-
-                        if test_id and text and len(text.strip()) > 0:
-                            # Record conversation turn for the agent
-                            from app.services.evaluator import evaluator_service
-
-                            # Save the transcription
-                            transcript_url = await save_transcription(
-                                text, test_id, call_sid, "agent", agent_turn_count
-                            )
-
-                            # Get the audio URL if we've accumulated audio data
-                            audio_url = None
-                            if (
-                                len(agent_audio_buffer) > 100
-                            ):  # Only save if we have some meaningful audio
-                                # Save the audio chunk
-                                audio_url = await save_audio_chunk(
-                                    bytes(agent_audio_buffer),
-                                    test_id,
-                                    call_sid,
-                                    "agent",
-                                    agent_turn_count,
-                                )
                                 # Also add to full conversation recording
                                 if is_recording_full_conversation:
-                                    full_conversation_audio.extend(agent_audio_buffer)
+                                    full_conversation_audio.extend(audio_payload)
 
-                                # Clear the buffer for the next chunk
-                                agent_audio_buffer.clear()
+                                # Forward to Twilio
+                                audio_delta = {
+                                    "event": "media",
+                                    "streamSid": stream_sid,
+                                    "media": {"payload": response["delta"]},
+                                }
+                                await websocket.send_json(audio_delta)
 
-                                # Increment turn counter
-                                agent_turn_count += 1
+                            except Exception as e:
+                                logger.error(f"Error processing audio data: {e}")
 
-                            # Record the turn
-                            evaluator_service.record_conversation_turn(
-                                test_id=test_id,
-                                call_sid=call_sid,
-                                speaker="agent",
-                                text=text,
-                                audio_url=audio_url,
-                            )
+                            if response_start_timestamp_twilio is None:
+                                response_start_timestamp_twilio = latest_media_timestamp
 
-                            # Update last transcription time
-                            last_transcription_time = datetime.now()
+                            # Update last_assistant_item safely
+                            if response.get("item_id"):
+                                last_assistant_item = response["item_id"]
 
-                    # Handle audio response from AI evaluator
-                    elif response["type"] == "response.audio.delta" and response.get(
-                        "delta"
-                    ):
-                        try:
-                            # Set current speaker to evaluator
+                            await send_mark(websocket, stream_sid)
+
+                        # Handle text/content from the evaluator
+                        elif response.get("type") == "response.content_part.added":
+                            # This is from OpenAI (evaluator)
                             current_speaker = "evaluator"
 
-                            # Decode audio data
-                            audio_payload = base64.b64decode(response["delta"])
+                            if "content_part" in response:
+                                content_part = response["content_part"]
+                                content = ""
 
-                            # Accumulate evaluator audio data
-                            evaluator_audio_buffer.extend(audio_payload)
+                                if isinstance(content_part, str):
+                                    content = content_part
+                                else:
+                                    content = content_part.get("text", "")
 
-                            # Also add to full conversation recording
-                            if is_recording_full_conversation:
-                                full_conversation_audio.extend(audio_payload)
+                                if content:
+                                    logger.info(f"Evaluator content: {content}")
+                                    response_text_buffer += content
 
-                            # Forward to Twilio
-                            audio_delta = {
-                                "event": "media",
-                                "streamSid": stream_sid,
-                                "media": {"payload": response["delta"]},
-                            }
-                            await websocket.send_json(audio_delta)
+                        # Handle audio transcript (the text OpenAI is saying)
+                        elif response.get("type") == "response.audio_transcript.delta":
+                            # This is from OpenAI (evaluator)
+                            current_speaker = "evaluator"
 
-                        except Exception as e:
-                            logger.error(f"Error processing audio data: {e}")
+                            if "delta" in response:
+                                # Check if delta is a string or object
+                                delta = response["delta"]
+                                if isinstance(delta, str):
+                                    transcript = delta
+                                else:
+                                    transcript = delta.get("text", "")
 
-                        if response_start_timestamp_twilio is None:
-                            response_start_timestamp_twilio = latest_media_timestamp
+                                if transcript:
+                                    response_text_buffer += transcript
 
-                        # Update last_assistant_item safely
-                        if response.get("item_id"):
-                            last_assistant_item = response["item_id"]
+                        # When a response is completed
+                        elif response.get("type") == "response.done":
+                            current_speaker = "evaluator"
+                            logger.info("Response marked as done")
 
-                        await send_mark(websocket, stream_sid)
+                            # Save accumulated evaluator audio if we have any
+                            audio_url = None
+                            if (
+                                len(evaluator_audio_buffer) > 100
+                            ):  # Only save if we have meaningful audio
+                                # Save the audio chunk
+                                audio_url = await save_audio_chunk(
+                                    bytes(evaluator_audio_buffer),
+                                    test_id,
+                                    call_sid,
+                                    "evaluator",  # Explicitly use "evaluator" here
+                                    evaluator_turn_count,
+                                )
 
-                    # Handle text/content from the evaluator
-                    elif response.get("type") == "response.content_part.added":
-                        if "content_part" in response:
-                            content_part = response["content_part"]
-                            content = ""
+                                # Clear the buffer for the next chunk
+                                evaluator_audio_buffer.clear()
 
-                            if isinstance(content_part, str):
-                                content = content_part
-                            else:
-                                content = content_part.get("text", "")
+                                # Increment turn counter
+                                evaluator_turn_count += 1
 
-                            if content:
-                                logger.info(f"Evaluator content: {content}")
-                                response_text_buffer += content
+                            # Record the turn with the accumulated text if we have any
+                            if response_text_buffer and test_id:
+                                # Save transcription
+                                transcript_url = await save_transcription(
+                                    response_text_buffer,
+                                    test_id,
+                                    call_sid,
+                                    "evaluator",  # Explicitly use "evaluator" here
+                                    evaluator_turn_count - 1,  # Use the last turn count
+                                )
 
-                    # Handle audio transcript (the text OpenAI is saying)
-                    elif response.get("type") == "response.audio_transcript.delta":
-                        if "delta" in response:
-                            # Check if delta is a string or object
-                            delta = response["delta"]
-                            if isinstance(delta, str):
-                                transcript = delta
-                            else:
-                                transcript = delta.get("text", "")
+                                # Create turn data with all information
+                                turn_data = {
+                                    "speaker": "evaluator",  # Explicitly "evaluator"
+                                    "text": response_text_buffer,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "transcription_url": transcript_url,
+                                }
 
-                            if transcript:
-                                response_text_buffer += transcript
+                                if audio_url:
+                                    turn_data["audio_url"] = audio_url
 
-                    # When a response is completed
-                    elif response.get("type") == "response.done":
-                        logger.info("Response marked as done")
+                                # Save the turn data ONCE directly to the conversation
+                                from app.services.evaluator import evaluator_service
 
-                        # Save accumulated evaluator audio if we have any
-                        audio_url = None
-                        if (
-                            len(evaluator_audio_buffer) > 100
-                        ):  # Only save if we have some meaningful audio
-                            # Save the audio chunk
-                            audio_url = await save_audio_chunk(
-                                bytes(evaluator_audio_buffer),
-                                test_id,
-                                call_sid,
-                                "evaluator",
-                                evaluator_turn_count,
-                            )
+                                if test_id in evaluator_service.active_tests:
+                                    if (
+                                        "conversation"
+                                        not in evaluator_service.active_tests[test_id]
+                                    ):
+                                        evaluator_service.active_tests[test_id][
+                                            "conversation"
+                                        ] = []
 
-                            # Clear the buffer for the next chunk
-                            evaluator_audio_buffer.clear()
+                                    # Add the turn
+                                    evaluator_service.active_tests[test_id][
+                                        "conversation"
+                                    ].append(turn_data)
 
-                            # Increment turn counter
-                            evaluator_turn_count += 1
+                                    # Save to DynamoDB
+                                    from app.services.dynamodb_service import (
+                                        dynamodb_service,
+                                    )
 
-                        # Record the turn with the accumulated text if we have any
-                        if response_text_buffer and test_id:
-                            # Save transcription
-                            transcript_url = await save_transcription(
-                                response_text_buffer,
-                                test_id,
-                                call_sid,
-                                "evaluator",
-                                evaluator_turn_count - 1,  # Use the last turn count
-                            )
+                                    dynamodb_service.save_test(
+                                        test_id, evaluator_service.active_tests[test_id]
+                                    )
+                                    logger.info(
+                                        f"Saved evaluator turn to conversation: {response_text_buffer[:50]}..."
+                                    )
 
-                            from app.services.evaluator import evaluator_service
+                                response_text_buffer = ""
 
-                            evaluator_service.record_conversation_turn(
-                                test_id=test_id,
-                                call_sid=call_sid,
-                                speaker="evaluator",
-                                text=response_text_buffer,
-                                audio_url=audio_url,
-                            )
-                            response_text_buffer = ""
+                                # Update last transcription time
+                                last_transcription_time = datetime.now()
 
-                            # Update last transcription time
-                            last_transcription_time = datetime.now()
+                            # Clear markers
+                            mark_queue.clear()
+                            last_assistant_item = None
+                            response_start_timestamp_twilio = None
 
-                        # Clear markers
-                        mark_queue.clear()
-                        last_assistant_item = None
-                        response_start_timestamp_twilio = None
+                        if response.get("type") == "response.done" and any(
+                            "bye" in content.get("transcript", "")
+                            for item in response.get("response", {}).get("output", [])
+                            for content in item.get("content", [])
+                            if content.get("type") == "audio"
+                        ):
+                            time.sleep(5)
+                            print("ENDING CALL")
+                            print(call_sid)
+                            call = client.calls(call_sid).update(status="completed")
+                except Exception as e:
+                    logger.error(f"Error in evaluator_audio: {e}")
+                    import traceback
 
-            except Exception as e:
-                logger.error(f"Error in evaluator_audio: {e}")
-                import traceback
+                except WebSocketDisconnect:
+                    logger.warning("Client disconnected.")
+                    if openai_ws.state == State.OPEN:
+                        await openai_ws.close()
+                    logger.error(traceback.format_exc())
 
-                logger.error(traceback.format_exc())
-
-        async def handle_speech_started_event():
-            nonlocal response_start_timestamp_twilio, last_assistant_item
-            logging.info("Handling speech started event.")
-            if mark_queue and response_start_timestamp_twilio is not None:
-                elapsed_time = latest_media_timestamp - response_start_timestamp_twilio
-
-                logger.info(
-                    f"Calculating elapsed time for truncation: {latest_media_timestamp} - {response_start_timestamp_twilio} = {elapsed_time}ms"
-                )
-                if last_assistant_item:
-                    logger.info(
-                        f"Truncating item with ID: {last_assistant_item}, Truncated at: {elapsed_time}ms"
-                    )
-
-                    truncate_event = {
-                        "type": "conversation.item.truncate",
-                        "item_id": last_assistant_item,
-                        "content_index": 0,
-                        "audio_end_ms": elapsed_time,
-                    }
-                    await openai_ws.send(json.dumps(truncate_event))
-
-                await websocket.send_json({"event": "clear", "streamSid": stream_sid})
-
-                mark_queue.clear()
-                last_assistant_item = None
-                response_start_timestamp_twilio = None
-
-        async def send_mark(connection, stream_sid):
-            if stream_sid:
-                mark_event = {
-                    "event": "mark",
-                    "streamSid": stream_sid,
-                    "mark": {"name": "responsePart"},
-                }
-                await connection.send_json(mark_event)
-                mark_queue.append("responsePart")
-
-        try:
-            # Run both audio handlers concurrently
+            # Important - run both functions concurrently
             await asyncio.gather(agent_audio(), evaluator_audio())
-        except Exception as e:
-            logger.error(f"Error in handle_media_stream: {str(e)}")
-            import traceback
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
-        finally:
-            # When done, save any remaining audio and complete the test
-            if test_id and call_sid:
-                logger.info(
-                    f"WebSocket connection ended for test_id={test_id}, call_sid={call_sid}"
+    except Exception as e:
+        logger.error(f"Error in handle_media_stream: {str(e)}")
+        import traceback
+
+        logger.error(f"Traceback: {traceback.format_exc()}")
+    finally:
+        # When done, save any remaining audio and complete the test
+        if test_id and call_sid:
+            logger.info(
+                f"WebSocket connection ended for test_id={test_id}, call_sid={call_sid}"
+            )
+
+            # Save any remaining audio in buffers
+            if len(agent_audio_buffer) > 100:
+                await save_audio_chunk(
+                    bytes(agent_audio_buffer),
+                    test_id,
+                    call_sid,
+                    "agent",
+                    agent_turn_count,
                 )
 
-                # Save any remaining audio in buffers
-                if len(agent_audio_buffer) > 100:
-                    await save_audio_chunk(
-                        bytes(agent_audio_buffer),
-                        test_id,
-                        call_sid,
-                        "agent",
-                        agent_turn_count,
+            if len(evaluator_audio_buffer) > 100:
+                await save_audio_chunk(
+                    bytes(evaluator_audio_buffer),
+                    test_id,
+                    call_sid,
+                    "evaluator",
+                    evaluator_turn_count,
+                )
+
+            # Save the full conversation recording if available
+            if is_recording_full_conversation and len(full_conversation_audio) > 1000:
+                try:
+                    from app.services.s3_service import s3_service
+
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    key = f"tests/{test_id}/calls/{call_sid}/full_conversation_{timestamp}.wav"
+                    s3_service.s3_client.put_object(
+                        Bucket=s3_service.bucket_name,
+                        Key=key,
+                        Body=bytes(full_conversation_audio),
+                        ContentType="audio/wav",
                     )
-
-                if len(evaluator_audio_buffer) > 100:
-                    await save_audio_chunk(
-                        bytes(evaluator_audio_buffer),
-                        test_id,
-                        call_sid,
-                        "evaluator",
-                        evaluator_turn_count,
+                    full_recording_url = f"s3://{s3_service.bucket_name}/{key}"
+                    logger.info(
+                        f"Full conversation recording saved to: {full_recording_url}"
                     )
+                except Exception as e:
+                    logger.error(f"Error saving full conversation recording: {str(e)}")
 
-                # Save the full conversation recording if available
-                if (
-                    is_recording_full_conversation
-                    and len(full_conversation_audio) > 1000
-                ):
-                    try:
-                        from app.services.s3_service import s3_service
-
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        key = f"tests/{test_id}/calls/{call_sid}/full_conversation_{timestamp}.wav"
-
-                        logger.info(
-                            f"Saving full conversation recording ({len(full_conversation_audio)} bytes)"
-                        )
-
-                        # Convert audio data to proper WAV format if needed
-                        # This is simplified - in a real implementation, you might need
-                        # to handle the audio format conversion more robustly
-                        s3_service.s3_client.put_object(
-                            Bucket=s3_service.bucket_name,
-                            Key=key,
-                            Body=bytes(full_conversation_audio),
-                            ContentType="audio/wav",
-                        )
-
-                        full_recording_url = f"s3://{s3_service.bucket_name}/{key}"
-                        logger.info(
-                            f"Full conversation recording saved to: {full_recording_url}"
-                        )
-
-                        # Update test data with full recording URL
-                        from app.services.evaluator import evaluator_service
-
-                        if test_id in evaluator_service.active_tests:
-                            evaluator_service.active_tests[test_id][
-                                "full_recording_url"
-                            ] = full_recording_url
-                    except Exception as recording_error:
-                        logger.error(
-                            f"Error saving full conversation recording: {str(recording_error)}"
-                        )
+            # Process the call to generate evaluation report
             try:
-                from ..services.evaluator import evaluator_service
+                from app.services.evaluator import evaluator_service
 
-                conversation = []
                 if test_id in evaluator_service.active_tests:
                     conversation = evaluator_service.active_tests[test_id].get(
                         "conversation", []
                     )
 
-                if conversation:
-                    logger.info(
-                        f"Found {len(conversation)} conversation turns for test {test_id}"
-                    )
+                    if conversation:
+                        logger.info(
+                            f"Found {len(conversation)} conversation turns for test {test_id}"
+                        )
 
-                    # Update test status
-                    evaluator_service.active_tests[test_id]["status"] = "completed"
-                    evaluator_service.active_tests[test_id][
-                        "end_time"
-                    ] = datetime.now().isoformat()
+                        # Debug log the conversation content
+                        for i, turn in enumerate(conversation):
+                            logger.info(
+                                f"Turn {i}: {turn.get('speaker')} - {turn.get('text')[:50]}..."
+                            )
+                            if "audio_url" in turn:
+                                logger.info(f"  Audio URL: {turn.get('audio_url')}")
+                            if "transcription_url" in turn:
+                                logger.info(
+                                    f"  Transcript URL: {turn.get('transcription_url')}"
+                                )
 
-                    # Force a successful report generation with defaults if needed
-                    logger.info(f"Explicitly generating report for test {test_id}")
-                    report = await evaluator_service.generate_report_from_conversation(
-                        test_id, conversation
-                    )
-                    logger.info(f"Report generation completed with ID: {report.id}")
+                        # Update test status
+                        evaluator_service.active_tests[test_id]["status"] = "completed"
+                        evaluator_service.active_tests[test_id][
+                            "end_time"
+                        ] = datetime.now().isoformat()
+
+                        # Force a successful report generation
+                        logger.info(f"Generating final report for test {test_id}")
+                        report = (
+                            await evaluator_service.generate_report_from_conversation(
+                                test_id, conversation
+                            )
+                        )
+                        logger.info(f"Final report generated with ID: {report.id}")
+                    else:
+                        logger.error(f"No conversation turns found for test {test_id}")
                 else:
-                    logger.error(f"No conversation turns found for test {test_id}")
+                    logger.error(f"Test {test_id} not found in active_tests")
             except Exception as eval_error:
                 logger.error(f"Error during final report generation: {str(eval_error)}")
                 import traceback
