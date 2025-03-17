@@ -5,7 +5,7 @@ __pycache__/
 .requirements.zip
 .structure
 # vscode info
-.vscode
+
 .venv
 .serverless
 .notes
