@@ -1,0 +1,16 @@
+services:
+  fastapi:
+    image: my-fastapi-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+      - "5678:5678"
+    volumes:
+      - .:/app
+    env_file:
+      - ./.env
+    command: python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m uvicorn app.main:app --host 0.0.0.0 --port 80 --reload
+    # command: uvicorn app.main:app --host 0.0.0.0 --port 80 --reload
+

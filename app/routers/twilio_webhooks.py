@@ -11,6 +11,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+import os
 from fastapi.responses import HTMLResponse
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 from typing import Dict, Any, Optional
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 active_websockets = {}
 
-callback_url = config.get_parameter("/ai-evaluator/twilio_callback_url")
+callback_url = os.environ.get("TWILIO_CALLBACK_URL")
 
 
 @router.post("/call-started")

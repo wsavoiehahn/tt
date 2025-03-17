@@ -7,6 +7,7 @@ from io import BytesIO, StringIO
 from typing import Dict, Any, List, Optional, Union, BinaryIO
 import uuid
 from datetime import datetime
+import os
 
 from ..config import config
 
@@ -17,8 +18,8 @@ class S3Service:
     """Service for interacting with AWS S3 for storage."""
 
     def __init__(self):
-        self.region_name = config.region_name
-        self.bucket_name = config.get_parameter("/ai-evaluator/s3_bucket_name")
+        self.region_name = os.environ.get("AWS_DEFAULT_REGION")
+        self.bucket_name = os.environ.get("S3_BUCKET_NAME")
         self.s3_client = boto3.client("s3", region_name=self.region_name)
 
     def save_audio(
@@ -86,8 +87,8 @@ class S3Service:
         try:
             # Download the recording
             auth = (
-                config.get_parameter("/ai-evaluator/twilio_account_sid"),
-                config.get_parameter("/ai-evaluator/twilio_auth_token"),
+                os.environ.get("TWILIO_ACCOUNT_SID"),
+                os.environ.get("TWILIO_AUTH_TOKEN"),
             )
             response = requests.get(recording_url, auth=auth)
 

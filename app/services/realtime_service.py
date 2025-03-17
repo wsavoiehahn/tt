@@ -22,7 +22,7 @@ class RealtimeService:
     """Enhanced service for handling real-time voice interactions with OpenAI API."""
 
     def __init__(self):
-        self.api_key = config.get_parameter("/openai/api_key")
+        self.api_key = os.environ.get("OPENAI_API_KEY")
         self.realtime_url = "wss://api.openai.com/v1/realtime"
         self.realtime_model = "gpt-4o-realtime-preview-2024-12-17"
         self.voice = "coral"

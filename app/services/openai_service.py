@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from ..config import config
 from ..models.personas import Persona, Behavior
 from ..models.reports import EvaluationMetrics
+import os
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,7 @@ class OpenAIService:
     """Service for interacting with OpenAI APIs for conversation and evaluation."""
 
     def __init__(self):
-        self.api_key = config.get_parameter("/ai-evaluator/openai_api_key")
+        self.api_key = os.environ.get("OPENAI_API_KEY")
         self.realtime_url = "wss://api.openai.com/v1/realtime"
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.realtime_model = "gpt-4o-realtime-preview-2024-12-17"

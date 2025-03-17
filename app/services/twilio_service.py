@@ -13,6 +13,7 @@ import uuid
 import time
 import asyncio
 from ..config import config
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -21,21 +22,11 @@ class TwilioService:
     """Service for interacting with Twilio's API for call handling."""
 
     def __init__(self):
-        self.account_sid = config.get_parameter("/twilio/account_sid")
-        self.auth_token = config.get_parameter("/twilio/auth_token")
+        self.account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+        self.auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
         self.client = Client(self.account_sid, self.auth_token)
-        self.ai_service_number = config.get_parameter(
-            "/twilio/target_phone_number", False
-        )
-        if not self.ai_service_number:
-            self.ai_service_number = config.get_parameter(
-                "/ai-evaluator/ai_service_phone_number", False
-            )
-        self.callback_url = config.get_parameter("/ai-evaluator/twilio_callback_url")
-        if not self.callback_url:
-            self.callback_url = config.get_parameter(
-                "/ai-evaluator/twilio_callback_url", False
-            )
+        self.ai_service_number = os.environ.get("TARGET_PHONE_NUMBER")
+        self.callback_url = os.environ.get("TWILIO_CALLBACK_URL")
         # Track active calls
         self.active_calls = {}
 
@@ -158,7 +149,7 @@ class TwilioService:
             call_started_url = (
                 f"{self.callback_url}/webhooks/call-started?test_id={test_id}"
             )
-            media_stream_url = f"{self.callback_url}/media-stream?test_id={test_id}"
+            websocket_url = os.environ.get("WEBSOCKET_ENDPOINT")
             logger.info(f"Status callback URL: {status_callback_url}")
             logger.info(f"Call started URL: {call_started_url}")
 
@@ -169,7 +160,11 @@ class TwilioService:
                 )
                 # CALL STARTS HERE
                 connect = Connect()
-                stream = ()
+                stream = Stream(url=f"{websocket_url}/media-stream")
+                stream.parameter(name="test_id", value=test_id)
+                connect.append(stream)
+                response.append(connect)
+                logger.info(f"Generated TwiML: {str(response)}")
                 # Create the call with all parameters
                 call = self.client.calls.create(
                     to=self.ai_service_number,
@@ -184,7 +179,6 @@ class TwilioService:
                         "completed",
                     ],
                     status_callback_method="POST",
-                    url=media_stream_url,
                     method="POST",
                     # Add test_id as a parameter in multiple places to ensure it's available
                     machine_detection="Enable",
@@ -195,6 +189,14 @@ class TwilioService:
                     # Add optional parameters
                     record=True,
                 )
+
+                # outbound_twiml = (
+                #     f'<?xml version="1.0" encoding="UTF-8"?>'
+                #     f'<Response><Connect><Stream url="{websocket_url}/media-stream?test_id={test_id}" /></Connect></Response>'
+                # )
+                # call = self.client.calls.create(
+                #     from_=from_number, to=self.ai_service_number, twiml=outbound_twiml
+
                 logger.info(f"Call created successfully with SID: {call.sid}")
                 logger.info(f"Call direction: {call.direction}")
             except Exception as call_error:

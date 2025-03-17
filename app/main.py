@@ -10,11 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import tests, reports, twilio_webhooks
+from .routers import tests, reports, twilio_webhooks, websocket_handlers
 from .config import config
 from .services.evaluator import evaluator_service
 from .services.s3_service import s3_service
 from .services.reporting import reporting_service
+
+import app.routers.websocket_handlers as websocket_handlers
+from fastapi import WebSocket, WebSocketDisconnect
 
 # Configure logging
 logging.basicConfig(
@@ -254,10 +257,10 @@ async def system_info():
         info = {
             "version": "1.0.0",
             "environment": os.environ.get("ENV", "development"),
-            "aws_region": config.region_name,
+            "aws_region": os.environ.get("AWS_DEFAULT_REGION"),
             "s3_bucket": s3_service.bucket_name,
-            "twilio_configured": bool(config.get_parameter("/twilio/account_sid")),
-            "openai_configured": bool(config.get_parameter("/openai/api_key")),
+            "twilio_configured": bool(os.environ.get("TWILIO_ACCOUNT_SID")),
+            "openai_configured": bool(os.environ.get("OPENAI_API_KEY")),
             "knowledge_base_items": len(
                 evaluator_service.knowledge_base.get("faqs", [])
             ),
@@ -314,3 +317,10 @@ if not hasattr(s3_service, "ensure_bucket_exists"):
 
     # Add the method to the service
     setattr(s3_service.__class__, "ensure_bucket_exists", ensure_bucket_exists)
+
+
+@app.websocket("/media-stream")
+async def media_stream(websocket: WebSocket):
+    """WebSocket endpoint for media streaming."""
+    logger.info("hit media-stream endpoint")
+    await websocket_handlers.handle_media_stream(websocket)

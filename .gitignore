@@ -8,6 +8,7 @@ __pycache__/
 .vscode
 .venv
 .serverless
+.notes
 
 # notes
 structure.txt
