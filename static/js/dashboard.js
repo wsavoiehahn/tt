@@ -618,10 +618,14 @@ async function createNewTest() {
             // Fetch reports after a delay to allow test to complete
             setTimeout(fetchReports, 2000);
         } else {
-            showToast(`Error creating test: ${data.detail || 'Unknown error'}`, 'error');
+            const errorDetails = typeof data.detail === 'object' 
+            ? JSON.stringify(data.detail, null, 2) 
+            : (data.detail || 'Unknown error');
+          
+            showToast(`Error creating test: ${errorDetails}`, 'error');
         }
     } catch (error) {
-        console.error('Error creating test:', error);
+        console.error('Error creating test:', {...error})
         showToast('Error creating test. Please try again.', 'error');
     }
 }

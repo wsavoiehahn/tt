@@ -243,7 +243,7 @@ async def handle_media_stream(websocket: WebSocket):
     # Create buffers to accumulate audio data by speaker
     evaluator_audio_buffer = bytearray()
     agent_audio_buffer = bytearray()
-
+    full_text_conversation = []
     test_id = None
     call_sid = None
     current_speaker = None
@@ -288,7 +288,7 @@ async def handle_media_stream(websocket: WebSocket):
 
             async def agent_audio():
                 """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
-                nonlocal stream_sid, latest_media_timestamp, call_sid, test_id, current_speaker, agent_turn_count
+                nonlocal stream_sid, latest_media_timestamp, call_sid, test_id, current_speaker, agent_turn_count, full_text_conversation
                 try:
                     async for message in websocket.iter_text():
                         from app.services.evaluator import evaluator_service
@@ -308,6 +308,29 @@ async def handle_media_stream(websocket: WebSocket):
                                 "audio": audio_payload,
                             }
                             await openai_ws.send(json.dumps(audio_append))
+                            # Handle text messages from Twilio
+                        elif data["event"] == "text" and openai_ws.state == State.OPEN:
+                            current_speaker = "agent"
+                            text_content = data.get("text", {}).get("content", "")
+                            if text_content:
+                                logger.info(
+                                    f"Received text from Twilio: {text_content}"
+                                )
+                                # Send text to OpenAI
+                                conversation_item = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "message",
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "input_text",
+                                                "text": text_content,
+                                            }
+                                        ],
+                                    },
+                                }
+                                await openai_ws.send(json.dumps(conversation_item))
                         elif data["event"] == "start":
                             stream_sid = data["start"]["streamSid"]
                             call_sid = data["start"]["callSid"]
@@ -373,7 +396,7 @@ async def handle_media_stream(websocket: WebSocket):
                                         evaluator_service.active_tests[test_id],
                                     )
                 except (WebSocketDisconnect, RuntimeError) as e:
-                    logger.warning("agent_audio: WebSocket error: {e}")
+                    logger.warning(f"agent_audio: WebSocket error: {e}")
                     if openai_ws.state == State.OPEN:
                         await openai_ws.close()
                         await websocket.close()
@@ -388,7 +411,7 @@ async def handle_media_stream(websocket: WebSocket):
                 """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
                 nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio, test_id
                 nonlocal current_speaker, evaluator_audio_buffer, full_conversation_audio
-                nonlocal evaluator_turn_count, agent_turn_count, last_transcription_time
+                nonlocal evaluator_turn_count, agent_turn_count, last_transcription_time, full_text_conversation
 
                 response_text_buffer = ""
 
@@ -411,7 +434,14 @@ async def handle_media_stream(websocket: WebSocket):
                                     "agent",  # Use explicit "agent" here
                                     agent_turn_count,
                                 )
-
+                                logger.info("*****saving agent text*****")
+                                full_text_conversation.append(
+                                    {
+                                        "speaker": "agent",
+                                        "text": text,
+                                        "timestamp": datetime.now().isoformat(),
+                                    }
+                                )
                                 # Get the audio URL if we've accumulated audio data
                                 audio_url = None
                                 if len(agent_audio_buffer) > 100:
@@ -583,7 +613,14 @@ async def handle_media_stream(websocket: WebSocket):
                                     "evaluator",  # Explicitly use "evaluator" here
                                     evaluator_turn_count - 1,  # Use the last turn count
                                 )
-
+                                logger.info("*****saving evaluator text*****")
+                                full_text_conversation.append(
+                                    {
+                                        "speaker": "evaluator",
+                                        "text": response_text_buffer,
+                                        "timestamp": datetime.now().isoformat(),
+                                    }
+                                )
                                 # Create turn data with all information
                                 turn_data = {
                                     "speaker": "evaluator",  # Explicitly "evaluator"
@@ -678,6 +715,58 @@ async def handle_media_stream(websocket: WebSocket):
             logger.info(
                 f"WebSocket connection ended for test_id={test_id}, call_sid={call_sid}"
             )
+            if full_text_conversation:
+                try:
+                    # Save full text conversation to S3
+                    from app.services.s3_service import s3_service
+                    from app.services.evaluator import evaluator_service
+
+                    # Convert to formatted text
+                    formatted_text = "\n\n".join(
+                        [
+                            f"{turn['timestamp']} - {turn['speaker']}:\n{turn['text']}"
+                            for turn in full_text_conversation
+                        ]
+                    )
+
+                    # Save to S3
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    key = f"tests/{test_id}/calls/{call_sid}/full_conversation_text_{timestamp}.txt"
+                    s3_service.s3_client.put_object(
+                        Bucket=s3_service.bucket_name,
+                        Key=key,
+                        Body=formatted_text.encode("utf-8"),
+                        ContentType="text/plain",
+                    )
+
+                    # Also save structured data for easier processing
+                    json_key = f"tests/{test_id}/calls/{call_sid}/full_conversation_text_{timestamp}.json"
+                    s3_service.s3_client.put_object(
+                        Bucket=s3_service.bucket_name,
+                        Key=json_key,
+                        Body=json.dumps(full_text_conversation),
+                        ContentType="application/json",
+                    )
+
+                    # Add the text conversation URLs to the test data
+                    if test_id in evaluator_service.active_tests:
+                        evaluator_service.active_tests[test_id][
+                            "full_text_conversation"
+                        ] = {
+                            "text_url": f"s3://{s3_service.bucket_name}/{key}",
+                            "json_url": f"s3://{s3_service.bucket_name}/{json_key}",
+                        }
+
+                        # Save to DynamoDB
+                        dynamodb_service.save_test(
+                            test_id, evaluator_service.active_tests[test_id]
+                        )
+
+                    logger.info(
+                        f"Full text conversation saved to: s3://{s3_service.bucket_name}/{key}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error saving full text conversation: {str(e)}")
 
             # Save any remaining audio in buffers
             if len(agent_audio_buffer) > 100:

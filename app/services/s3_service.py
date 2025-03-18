@@ -419,7 +419,7 @@ class S3Service:
                 ExpiresIn=expiration,
             )
 
-            logger.info(f"Generated presigned URL: {url[:100]}...")
+            logger.debug(f"Generated presigned URL: {url[:100]}...")
             return url
         except Exception as e:
             logger.error(f"Error generating presigned URL: {str(e)}")
