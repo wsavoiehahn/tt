@@ -1,5 +1,5 @@
 # app/websocket_handlers.py
-from datetime import datetime, timezone
+from datetime import datetime
 import os
 import json
 import base64
@@ -10,12 +10,10 @@ import websockets
 import websockets.connection
 from websockets.protocol import State
 from fastapi import WebSocket, WebSocketDisconnect
-from typing import Dict, Any, Optional, List
 from twilio.rest import Client
 from app.config import config
-from app.services.evaluator import evaluator_service
 from app.services.dynamodb_service import dynamodb_service
-from app.models.personas import Persona, Behavior
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +32,8 @@ LOG_EVENT_TYPES = [
     "input_audio_buffer.speech_stopped",
     "input_audio_buffer.speech_started",
     "session_created",
+    "conversation.item.input_audio_transcription.failed",
+    "conversation.item.input_audio_transcription.completed",
 ]
 
 # Track active WebSocket connections
@@ -165,76 +165,6 @@ async def register_connection(websocket: WebSocket, test_id: str, call_sid: str)
     return connection_id
 
 
-async def connect_to_openai(test_id: str, client) -> websockets.WebSocketClientProtocol:
-    """Connect to OpenAI realtime API and set up a session"""
-    try:
-        # Import knowledge base
-        from app.services.evaluator import evaluator_service
-
-        # Get test data if available
-        test_data = {}
-        if test_id in evaluator_service.active_tests:
-            test_data = evaluator_service.active_tests[test_id]
-
-        # Load knowledge base
-        knowledge_base = config.load_knowledge_base()
-
-        # Connect to OpenAI
-        logger.error("Connecting to OpenAI realtime API")
-        openai_ws = await websockets.connect(
-            "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
-            additional_headers={
-                "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
-                "OpenAI-Beta": "realtime=v1",
-            },
-        )
-
-        # Create system message
-        persona_name = test_data.get("config", {}).get(
-            "persona_name", "Default Persona"
-        )
-        behavior_name = test_data.get("config", {}).get(
-            "behavior_name", "Default Behavior"
-        )
-
-        # Get persona and behavior details
-        persona = evaluator_service.get_persona(persona_name)
-        behavior = evaluator_service.get_behavior(behavior_name)
-
-        # Create system message
-        system_message = f"""
-        You are an AI evaluator testing a customer service response.
-        You are calling as a {persona_name} persona with {behavior_name} behavior traits.
-        You are calling to ask questions about insurance plans.
-        """
-
-        # Initialize session
-        session_update = {
-            "type": "session.update",
-            "session": {
-                "turn_detection": {"type": "server_vad", "threshold": 0.8},
-                "input_audio_format": "g711_ulaw",
-                "output_audio_format": "g711_ulaw",
-                "voice": VOICE,
-                "instructions": system_message,
-                "modalities": ["text", "audio"],
-                "temperature": 0.7,
-            },
-        }
-
-        await openai_ws.send(json.dumps(session_update))
-        logger.error("OpenAI session initialized")
-
-        return openai_ws
-
-    except Exception as e:
-        logger.error(f"Error connecting to OpenAI: {str(e)}")
-        import traceback
-
-        logger.error(traceback.format_exc())
-        raise
-
-
 async def handle_media_stream(websocket: WebSocket):
     """WebSocket endpoint for media streaming."""
     await websocket.accept()
@@ -308,29 +238,6 @@ async def handle_media_stream(websocket: WebSocket):
                                 "audio": audio_payload,
                             }
                             await openai_ws.send(json.dumps(audio_append))
-                            # Handle text messages from Twilio
-                        elif data["event"] == "text" and openai_ws.state == State.OPEN:
-                            current_speaker = "agent"
-                            text_content = data.get("text", {}).get("content", "")
-                            if text_content:
-                                logger.info(
-                                    f"Received text from Twilio: {text_content}"
-                                )
-                                # Send text to OpenAI
-                                conversation_item = {
-                                    "type": "conversation.item.create",
-                                    "item": {
-                                        "type": "message",
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "input_text",
-                                                "text": text_content,
-                                            }
-                                        ],
-                                    },
-                                }
-                                await openai_ws.send(json.dumps(conversation_item))
                         elif data["event"] == "start":
                             stream_sid = data["start"]["streamSid"]
                             call_sid = data["start"]["callSid"]
@@ -416,25 +323,31 @@ async def handle_media_stream(websocket: WebSocket):
                 response_text_buffer = ""
 
                 try:
+
                     async for openai_message in openai_ws:
                         response = json.loads(openai_message)
                         if response["type"] in LOG_EVENT_TYPES:
                             logger.info(f"Received event: {response['type']}")
+
                         # Handle transcribed input from the agent
-                        if response.get("type") == "input_audio_buffer.transcription":
-                            current_speaker = "agent"  # Set correct speaker
-                            text = response.get("text", "")
-                            logger.error(f"Agent transcription: {text}")
-                            if test_id and text and len(text.strip()) > 0:
-                                # Save the transcription
+                        if response.get("type") in [
+                            "conversation.item.input_audio_transcription.completed",
+                        ]:
+                            text = response.get("transcript", "")
+                            if text:
+                                current_speaker = "agent"
+                                logger.info(f"Agent transcription from OpenAI: {text}")
+
+                                # Save transcription
                                 transcript_url = await save_transcription(
                                     text,
                                     test_id,
                                     call_sid,
-                                    "agent",  # Use explicit "agent" here
+                                    "agent",
                                     agent_turn_count,
                                 )
-                                logger.info("*****saving agent text*****")
+
+                                # Append to full conversation
                                 full_text_conversation.append(
                                     {
                                         "speaker": "agent",
@@ -442,30 +355,23 @@ async def handle_media_stream(websocket: WebSocket):
                                         "timestamp": datetime.now().isoformat(),
                                     }
                                 )
-                                # Get the audio URL if we've accumulated audio data
+
+                                # Save audio chunk if available
                                 audio_url = None
                                 if len(agent_audio_buffer) > 100:
-                                    # Save the audio chunk
                                     audio_url = await save_audio_chunk(
                                         bytes(agent_audio_buffer),
                                         test_id,
                                         call_sid,
-                                        "agent",  # Use explicit "agent" here
+                                        "agent",
                                         agent_turn_count,
                                     )
 
-                                    # Also add to full conversation recording
-                                    if is_recording_full_conversation:
-                                        full_conversation_audio.extend(
-                                            agent_audio_buffer
-                                        )
-
-                                    # Clear the buffer for the next chunk
                                     agent_audio_buffer.clear()
 
-                                # Create single conversation turn with all data
+                                # Add to conversation history once
                                 turn_data = {
-                                    "speaker": "agent",  # Explicitly use "agent"
+                                    "speaker": "agent",
                                     "text": text,
                                     "timestamp": datetime.now().isoformat(),
                                     "transcription_url": transcript_url,
@@ -474,37 +380,21 @@ async def handle_media_stream(websocket: WebSocket):
                                 if audio_url:
                                     turn_data["audio_url"] = audio_url
 
-                                # Only save this turn ONCE to the conversation
                                 from app.services.evaluator import evaluator_service
+                                from app.services.dynamodb_service import (
+                                    dynamodb_service,
+                                )
 
                                 if test_id in evaluator_service.active_tests:
-                                    if (
-                                        "conversation"
-                                        not in evaluator_service.active_tests[test_id]
-                                    ):
-                                        evaluator_service.active_tests[test_id][
-                                            "conversation"
-                                        ] = []
-
-                                    # Add the turn directly to the conversation array
-                                    evaluator_service.active_tests[test_id][
-                                        "conversation"
-                                    ].append(turn_data)
-
-                                    # Save to DynamoDB
-                                    from app.services.dynamodb_service import (
-                                        dynamodb_service,
-                                    )
-
+                                    evaluator_service.active_tests[test_id].setdefault(
+                                        "conversation", []
+                                    ).append(turn_data)
                                     dynamodb_service.save_test(
-                                        test_id, evaluator_service.active_tests[test_id]
+                                        test_id,
+                                        evaluator_service.active_tests[test_id],
                                     )
-                                    logger.info(
-                                        f"Saved agent turn to conversation: {text[:50]}..."
-                                    )
-
-                                # Update last transcription time
-                                last_transcription_time = datetime.now()
+                                    logger.info(f"Saved agent turn: {text[:50]}...")
+                                    agent_turn_count += 1
 
                         # Handle audio response from AI evaluator
                         elif response[
@@ -671,16 +561,19 @@ async def handle_media_stream(websocket: WebSocket):
                             last_assistant_item = None
                             response_start_timestamp_twilio = None
 
-                        if response.get("type") == "response.done" and any(
-                            "bye" in content.get("transcript", "")
-                            for item in response.get("response", {}).get("output", [])
-                            for content in item.get("content", [])
-                            if content.get("type") == "audio"
-                        ):
-                            time.sleep(1)
-                            logger.info(f"ending call: {call_sid}")
-                            call = client.calls(call_sid).update(status="completed")
-                            await websocket.close()
+                            if any(
+                                "bye" in content.get("transcript", "")
+                                for item in response.get("response", {}).get(
+                                    "output", []
+                                )
+                                for content in item.get("content", [])
+                                if content.get("type") == "audio"
+                            ):
+                                time.sleep(1)
+                                logger.info(f"ending call: {call_sid}")
+                                call = client.calls(call_sid).update(status="completed")
+                                await websocket.close()
+
                 except (
                     websockets.exceptions.ConnectionClosed,
                     WebSocketDisconnect,
@@ -905,7 +798,8 @@ async def initialize_session(openai_ws):
             "voice": VOICE,
             "instructions": _create_system_prompt(),
             "modalities": ["text", "audio"],
-            "temperature": 0.8,
+            "temperature": 0.7,
+            "input_audio_transcription": {"model": "whisper-1", "language": "en"},
         },
     }
 

@@ -1,19 +1,13 @@
 # app/services/twilio_service.py
 import os
 import logging
-import json
 import requests
 from typing import Dict, Any, Optional, List
 from twilio.rest import Client
-from twilio.twiml.voice_response import VoiceResponse, Gather, Start, Connect, Stream
+from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 
-from fastapi import Request
 
-import uuid
 import time
-import asyncio
-from ..config import config
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +170,6 @@ class TwilioService:
                     ],
                     status_callback_method="POST",
                     method="POST",
-                    # Add test_id as a parameter in multiple places to ensure it's available
                     machine_detection="Enable",
                     machine_detection_timeout=30,
                     machine_detection_speech_threshold=2500,

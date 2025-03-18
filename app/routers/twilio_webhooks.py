@@ -5,21 +5,13 @@ import json
 from fastapi import (
     APIRouter,
     Request,
-    HTTPException,
-    Response,
-    BackgroundTasks,
     WebSocket,
     WebSocketDisconnect,
 )
 import os
-from fastapi.responses import HTMLResponse
-from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
-from typing import Dict, Any, Optional
 
-from ..config import config
-from ..services.twilio_service import twilio_service
-from ..services.dynamodb_service import dynamodb_service
-from ..services.evaluator import evaluator_service
+from app.services.twilio_service import twilio_service
+from app.services.evaluator import evaluator_service
 
 router = APIRouter(prefix="/webhooks", tags=["Twilio Webhooks"])
 logger = logging.getLogger(__name__)

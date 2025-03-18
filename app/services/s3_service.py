@@ -3,13 +3,9 @@ import json
 import logging
 import boto3
 from botocore.exceptions import ClientError
-from io import BytesIO, StringIO
-from typing import Dict, Any, List, Optional, Union, BinaryIO
-import uuid
+from typing import Dict, Any, List, Union, BinaryIO
 from datetime import datetime
 import os
-
-from ..config import config
 
 logger = logging.getLogger(__name__)
 
@@ -396,7 +392,7 @@ class S3Service:
             else:
                 bucket = self.bucket_name
 
-            logger.info(f"Generating presigned URL for: bucket={bucket}, key={key}")
+            logger.debug(f"Generating presigned URL for: bucket={bucket}, key={key}")
 
             # First check if the object exists
             try:

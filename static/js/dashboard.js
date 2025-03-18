@@ -382,24 +382,6 @@ async function fetchPersonasAndBehaviors() {
             console.log('Could not fetch from API, using hardcoded values');
         }
         
-        // Fall back to hardcoded values if API doesn't return data
-        if (personas.length === 0) {
-            personas = [
-                { name: "Tech-Savvy", traits: ["knowledgeable", "efficient", "solution-oriented", "independent", "precise"] },
-                { name: "Non-Native Speaker", traits: ["careful with language", "may need clarification", "persistent", "apologetic", "attentive"] },
-                { name: "First Time Customer", traits: ["uncertain", "inquisitive", "careful", "detail-seeking", "needs reassurance"] },
-                { name: "Accidental Customer", traits: ["confused", "potentially frustrated", "uncertain", "wanting clarification", "may be embarrassed"] }
-            ];
-        }
-        
-        if (behaviors.length === 0) {
-            behaviors = [
-                { name: "frustrated", characteristics: ["shows impatience", "may use stronger language", "emphasizes urgency", "references previous attempts", "seeks immediate resolution"] },
-                { name: "confused", characteristics: ["asks for clarification", "may repeat questions", "expresses uncertainty", "seeks confirmation", "may misunderstand instructions"] },
-                { name: "urgent", characteristics: ["emphasizes time sensitivity", "seeks immediate solutions", "may interrupt", "focused on quick resolution", "may express consequences of delay"] }
-            ];
-        }
-        
         populateSelects(personas, behaviors);
         
     } catch (error) {

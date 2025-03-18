@@ -1,12 +1,11 @@
 # app/routers/reports.py
 import logging
-from fastapi import APIRouter, HTTPException, Depends, Query, Path, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from typing import List, Dict, Any, Optional
-from uuid import UUID
 
-from ..services.reporting import reporting_service
-from ..services.s3_service import s3_service
+from app.services.reporting import reporting_service
+from app.services.s3_service import s3_service
 
 router = APIRouter(
     prefix="/api/reports",
@@ -31,7 +30,7 @@ async def list_reports(
     Returns:
         List of report metadata
     """
-    logger.info(f"Listing reports (limit: {limit}, offset: {offset})")
+    logger.debug(f"Listing reports (limit: {limit}, offset: {offset})")
     reports = reporting_service.list_reports(limit=limit)
 
     # Create a new list with deduplicated reports based on report_id
@@ -78,7 +77,7 @@ async def get_s3_presigned_url(
     Returns:
         Dictionary with the presigned URL
     """
-    logger.info(f"Generating presigned URL for s3://{bucket}/{key}")
+    logger.debug(f"Generating presigned URL for s3://{bucket}/{key}")
 
     url = s3_service.generate_presigned_url(f"s3://{bucket}/{key}", expiration)
 
@@ -101,10 +100,10 @@ async def get_presigned_audio_url(
     Returns:
         Dict with presigned URL and content type
     """
-    logger.info(f"Generating presigned URL for: {s3_url}")
+    logger.debug(f"Generating presigned URL for: {s3_url}")
 
     try:
-        from ..services.s3_service import s3_service
+        from app.services.s3_service import s3_service
 
         # Validate S3 URL format
         if not s3_url.startswith("s3://"):
@@ -277,7 +276,7 @@ async def get_audio_file(test_id: str, call_sid: str, filename: str):
         logger.info(f"Attempting to retrieve audio file: {s3_key}")
 
         # Get the file from S3
-        from ..services.s3_service import s3_service
+        from app.services.s3_service import s3_service
 
         try:
             # Check if the file exists

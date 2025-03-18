@@ -4,10 +4,9 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime
+from typing import Dict, Any, List, Optional
 import requests
-import tempfile
 import os
 
 from app.models.personas import Persona, Behavior
@@ -19,8 +18,7 @@ from app.models.reports import (
     TestCaseReport,
 )
 from app.config import config
-from .twilio_service import twilio_service
-from .s3_service import s3_service
+from app.services.s3_service import s3_service
 
 logger = logging.getLogger(__name__)
 
