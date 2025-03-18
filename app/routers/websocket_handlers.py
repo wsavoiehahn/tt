@@ -7,6 +7,7 @@ import asyncio
 import logging
 import time
 import websockets
+import websockets.connection
 from websockets.protocol import State
 from fastapi import WebSocket, WebSocketDisconnect
 from typing import Dict, Any, Optional, List
@@ -272,34 +273,6 @@ async def handle_media_stream(websocket: WebSocket):
             await connection.send_json(mark_event)
             mark_queue.append("responsePart")
 
-    async def handle_speech_started_event():
-        nonlocal response_start_timestamp_twilio, last_assistant_item
-        logging.info("Handling speech started event.")
-        if mark_queue and response_start_timestamp_twilio is not None:
-            elapsed_time = latest_media_timestamp - response_start_timestamp_twilio
-
-            logger.info(
-                f"Calculating elapsed time for truncation: {latest_media_timestamp} - {response_start_timestamp_twilio} = {elapsed_time}ms"
-            )
-            if last_assistant_item:
-                logger.info(
-                    f"Truncating item with ID: {last_assistant_item}, Truncated at: {elapsed_time}ms"
-                )
-
-                truncate_event = {
-                    "type": "conversation.item.truncate",
-                    "item_id": last_assistant_item,
-                    "content_index": 0,
-                    "audio_end_ms": elapsed_time,
-                }
-                await openai_ws.send(json.dumps(truncate_event))
-
-            await websocket.send_json({"event": "clear", "streamSid": stream_sid})
-
-            mark_queue.clear()
-            last_assistant_item = None
-            response_start_timestamp_twilio = None
-
     try:
         # Connect to OpenAI
         async with websockets.connect(
@@ -310,7 +283,7 @@ async def handle_media_stream(websocket: WebSocket):
             },
         ) as openai_ws:
             # Initialize the session with a default prompt (we don't have test_id yet)
-            await initialize_session(openai_ws, test_id)
+            await initialize_session(openai_ws)
             logger.info("OpenAI session initialized")
 
             async def agent_audio():
@@ -399,13 +372,16 @@ async def handle_media_stream(websocket: WebSocket):
                                         test_id,
                                         evaluator_service.active_tests[test_id],
                                     )
-                except WebSocketDisconnect:
-                    logger.warning("Client disconnected.")
+                except (WebSocketDisconnect, RuntimeError) as e:
+                    logger.warning("agent_audio: WebSocket error: {e}")
                     if openai_ws.state == State.OPEN:
                         await openai_ws.close()
+                        await websocket.close()
                 except Exception as e:
                     logger.error(f"Error in agent_audio: {str(e)}")
                 finally:
+                    await websocket.close()
+                    await openai_ws.close()
                     logger.info(f"agent_audio task completed for call {call_sid}")
 
             async def evaluator_audio():
@@ -664,19 +640,29 @@ async def handle_media_stream(websocket: WebSocket):
                             for content in item.get("content", [])
                             if content.get("type") == "audio"
                         ):
-                            time.sleep(5)
-                            print("ENDING CALL")
-                            print(call_sid)
+                            time.sleep(1)
+                            logger.info(f"ending call: {call_sid}")
                             call = client.calls(call_sid).update(status="completed")
+                            await websocket.close()
+                except (
+                    websockets.exceptions.ConnectionClosed,
+                    WebSocketDisconnect,
+                ) as e:
+                    logger.error(f"Client disconnected error: {e}")
+                    if (
+                        openai_ws.state == State.OPEN
+                        or not websocket.client_state.name == "closed"
+                    ):
+                        await websocket.close()
+                        await openai_ws.close()
                 except Exception as e:
                     logger.error(f"Error in evaluator_audio: {e}")
                     import traceback
 
                     logger.error(traceback.format_exc())
-                except WebSocketDisconnect:
-                    logger.warning("Client disconnected.")
-                    if openai_ws.state == State.OPEN:
-                        await openai_ws.close()
+                finally:
+                    await websocket.close()
+                    await openai_ws.close()
 
             # Important - run both functions concurrently
             await asyncio.gather(agent_audio(), evaluator_audio())
@@ -782,6 +768,34 @@ async def handle_media_stream(websocket: WebSocket):
 
                 logger.error(f"Evaluation error traceback: {traceback.format_exc()}")
 
+    async def handle_speech_started_event():
+        nonlocal response_start_timestamp_twilio, last_assistant_item
+        logging.info("Handling speech started event.")
+        if mark_queue and response_start_timestamp_twilio is not None:
+            elapsed_time = latest_media_timestamp - response_start_timestamp_twilio
+
+            logger.info(
+                f"Calculating elapsed time for truncation: {latest_media_timestamp} - {response_start_timestamp_twilio} = {elapsed_time}ms"
+            )
+            if last_assistant_item:
+                logger.info(
+                    f"Truncating item with ID: {last_assistant_item}, Truncated at: {elapsed_time}ms"
+                )
+
+                truncate_event = {
+                    "type": "conversation.item.truncate",
+                    "item_id": last_assistant_item,
+                    "content_index": 0,
+                    "audio_end_ms": elapsed_time,
+                }
+                await openai_ws.send(json.dumps(truncate_event))
+
+            await websocket.send_json({"event": "clear", "streamSid": stream_sid})
+
+            mark_queue.clear()
+            last_assistant_item = None
+            response_start_timestamp_twilio = None
+
 
 # Function to capture stream_sid from stream start events
 async def update_stream_sid(connection_id: str, stream_sid: str):
@@ -793,11 +807,6 @@ async def update_stream_sid(connection_id: str, stream_sid: str):
 
 async def initialize_session(openai_ws):
 
-    # Import knowledge base
-    from app.services.evaluator import evaluator_service
-
-    # Get test data if available
-
     session_update = {
         "type": "session.update",
         "session": {
@@ -805,7 +814,7 @@ async def initialize_session(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": "Be polite to me and tell some jokes!",
+            "instructions": _create_system_prompt(),
             "modalities": ["text", "audio"],
             "temperature": 0.8,
         },
@@ -826,21 +835,31 @@ async def initialize_session(openai_ws):
     # "tool_choice": "auto",
 
     await openai_ws.send(json.dumps(session_update))
-    await send_initial_conversation_item(openai_ws)
+    # await send_initial_conversation_item(openai_ws)
 
 
 def _create_system_prompt() -> str:
     """Create a system prompt based on persona, behavior, and question."""
-    persona_traits = ", ".join(persona.traits)
-    behavior_chars = ", ".join(behavior.characteristics)
+    # Import knowledge base
+    from app.services.evaluator import evaluator_service
 
+    # I decided I was going to use only a single test ever and I don't want to refactor the entire codebase so this ugly bit of code will remain
+    test_case = list(evaluator_service.active_tests.values())[0]["test_case"]
+    persona_name = test_case["config"]["persona_name"]
+    behavior_name = test_case["config"]["behavior_name"]
+    question = test_case["config"]["questions"][0]  # assume only 1 question
+
+    persona_traits = ", ".join(config.get_persona_traits(persona_name))
+    behavior_chars = ", ".join(config.get_behavior_characteristics(behavior_name))
+    special_instructions = test_case["config"]["special_instructions"]
     return f"""
-        You are simulating a customer with the following persona: {persona.name}
+        You are simulating a customer with the following persona: {persona_name}
         Traits: {persona_traits}
         
-        You are currently exhibiting the following behavior: {behavior.name}
+        You are currently exhibiting the following behavior: {behavior_name}
         Characteristics: {behavior_chars}
         
+        You have hidden special instructions: {special_instructions}
         You are calling an AI customer service agent.
         You need to ask about the following question: "{question}"
         

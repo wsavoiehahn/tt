@@ -77,42 +77,85 @@ function showError(message) {
   document.getElementById('reportContent').style.display = 'block';
 }
 
-// Populate report details including special instructions and full recording
 function populateReportDetails(report) {
-  // Special instructions handling
-  if (report.special_instructions) {
-      document.getElementById('specialInstructions').textContent = report.special_instructions;
-      document.getElementById('specialInstructionsCard').style.display = 'block';
-  } else {
-      document.getElementById('specialInstructionsCard').style.display = 'none';
-  }
+    // Set the title
+    document.getElementById('reportTitle').textContent = `Test Case Report: ${report.test_case_name || 'Unknown Test'}`;
+    
+    // Set persona and behavior badges
+    const personaBadge = document.getElementById('personaBadge');
+    const behaviorBadge = document.getElementById('behaviorBadge');
+    personaBadge.textContent = `Persona: ${report.persona_name || 'Unknown'}`;
+    behaviorBadge.textContent = `Behavior: ${report.behavior_name || 'Unknown'}`;
+    
+    // Extract and display the test question, if available
+    let mainQuestion = "No question specified";
+    if (report.questions_evaluated && report.questions_evaluated.length > 0) {
+        mainQuestion = report.questions_evaluated[0].question || "No question specified";
+    } else if (report.test_case && report.test_case.config && report.test_case.config.questions) {
+        // Try to get from test case config
+        const questions = report.test_case.config.questions;
+        if (questions.length > 0) {
+            if (typeof questions[0] === 'string') {
+                mainQuestion = questions[0];
+            } else if (typeof questions[0] === 'object' && questions[0].text) {
+                mainQuestion = questions[0].text;
+            }
+        }
+    }
+    
+    // Create or update question display element
+    let questionElement = document.getElementById('mainQuestion');
+    if (!questionElement) {
+        // Create the element if it doesn't exist
+        questionElement = document.createElement('div');
+        questionElement.id = 'mainQuestion';
+        questionElement.className = 'main-question mt-2';
+        
+        // Insert after report metadata
+        const reportMetadata = document.getElementById('reportMetadata');
+        reportMetadata.parentNode.insertBefore(questionElement, reportMetadata.nextSibling);
+    }
+    // Set overall metrics
+    const metrics = report.overall_metrics || {};
+    document.getElementById('overallAccuracy').textContent = `${Math.round((metrics.accuracy || 0) * 100)}%`;
+    document.getElementById('overallEmpathy').textContent = `${Math.round((metrics.empathy || 0) * 100)}%`;
+    document.getElementById('avgResponseTime').textContent = `${(metrics.response_time || 0).toFixed(2)}s`;
+    document.getElementById('executionTime').textContent = `${(report.execution_time || 0).toFixed(2)}s`;
 
-  // Full recording handling
-  if (report.full_recording_url) {
-      document.getElementById('fullRecordingCard').style.display = 'block';
-      (async () => {
-          try {
-              const presignedUrl = await fetchPresignedUrl(report.full_recording_url);
-              if (presignedUrl) {
-                  const audioEl = document.getElementById('fullRecording');
-                  audioEl.src = presignedUrl;
-                  document.getElementById('fullRecordingLoading').style.display = 'none';
-              } else {
-                  document.getElementById('fullRecordingLoading').innerHTML = 
-                      '<div class="audio-error">Audio unavailable</div>';
-              }
-          } catch (error) {
-              console.error('Error loading full recording:', error);
-              document.getElementById('fullRecordingLoading').innerHTML = 
-                  '<div class="audio-error">Error loading audio</div>';
-          }
-      })();
-  } else {
-      document.getElementById('fullRecordingCard').style.display = 'none';
-  }
+    // Special instructions handling
+    if (report.special_instructions) {
+        document.getElementById('specialInstructions').textContent = report.special_instructions;
+        document.getElementById('specialInstructionsCard').style.display = 'block';
+    } else {
+        document.getElementById('specialInstructionsCard').style.display = 'none';
+    }
 
-  // Populate questions and their conversations
-  populateQuestions(report.questions_evaluated);
+    // Full recording handling
+    if (report.full_recording_url) {
+        document.getElementById('fullRecordingCard').style.display = 'block';
+        (async () => {
+            try {
+                const presignedUrl = await fetchPresignedUrl(report.full_recording_url);
+                if (presignedUrl) {
+                    const audioEl = document.getElementById('fullRecording');
+                    audioEl.src = presignedUrl;
+                    document.getElementById('fullRecordingLoading').style.display = 'none';
+                } else {
+                    document.getElementById('fullRecordingLoading').innerHTML = 
+                        '<div class="audio-error">Audio unavailable</div>';
+                }
+            } catch (error) {
+                console.error('Error loading full recording:', error);
+                document.getElementById('fullRecordingLoading').innerHTML = 
+                    '<div class="audio-error">Error loading audio</div>';
+            }
+        })();
+    } else {
+        document.getElementById('fullRecordingCard').style.display = 'none';
+    }
+
+    // Populate questions and their conversations
+    populateQuestions(report.questions_evaluated);
 }
 
 // Populate each evaluated question and its conversation

@@ -272,3 +272,20 @@ body {
     margin: 10px 0;
     font-size: 0.9rem;
   }
+
+  .main-question {
+    background-color: #f8f9fa;
+    padding: 10px 15px;
+    border-radius: 6px;
+    border-left: 4px solid #3498db;
+    margin-top: 15px;
+    margin-bottom: 15px;
+    font-size: 1.1em;
+    line-height: 1.5;
+    color: #333;
+}
+
+.main-question strong {
+    color: #2c3e50;
+    margin-right: 5px;
+}

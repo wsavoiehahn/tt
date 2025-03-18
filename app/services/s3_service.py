@@ -48,7 +48,6 @@ class S3Service:
         key = f"tests/{test_id}/calls/{call_sid}/audio/{filename}"
 
         try:
-            # Log what we're trying to do
             logger.info(f"Saving audio to S3: bucket={self.bucket_name}, key={key}")
 
             # Make sure the audio data is valid
@@ -218,7 +217,6 @@ class S3Service:
                 ContentType="application/json",
             )
 
-            # Log the exact path for debugging
             logger.info(f"Saved report {report_id} to S3 path: {key}")
 
             return f"s3://{self.bucket_name}/{key}"

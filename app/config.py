@@ -132,6 +132,36 @@ class Config:
             print(f"Error loading file {filepath}: {str(e)}")
             return {}
 
+    def get_persona_traits(self, persona_name):
+        """
+        Returns the traits for the given persona name.
+        If the persona is not found, returns None.
+        """
+        data = self.load_personas()
+        return next(
+            (
+                persona["traits"]
+                for persona in data["personas"]
+                if persona["name"] == persona_name
+            ),
+            None,
+        )
+
+    def get_behavior_characteristics(self, behavior_name):
+        """
+        Returns the characteristics for the given behavior name.
+        If the behavior is not found, returns None.
+        """
+        data = self.load_personas()
+        return next(
+            (
+                behavior["characteristics"]
+                for behavior in data["behaviors"]
+                if behavior["name"] == behavior_name
+            ),
+            None,
+        )
+
 
 # Create a singleton instance
 config = Config()

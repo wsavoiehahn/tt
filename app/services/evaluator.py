@@ -545,11 +545,8 @@ class EvaluatorService:
             question_text = "Default Question"
             if test_case.config.questions and len(test_case.config.questions) > 0:
                 first_q = test_case.config.questions[0]
-                if hasattr(first_q, "text"):
-                    question_text = first_q.text
-                elif isinstance(first_q, dict) and "text" in first_q:
-                    question_text = first_q["text"]
-                logger.info(f"Using question: {question_text}")
+                question_text = first_q
+            logger.info(f"Using question: {question_text}")
 
             # Evaluate the conversation
 

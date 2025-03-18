@@ -57,6 +57,93 @@ async def list_reports(
     return list(unique_reports.values())
 
 
+@router.get("/s3-presigned-url", response_model=Dict[str, str])
+async def get_s3_presigned_url(
+    bucket: str = Query(..., description="S3 bucket name"),
+    key: str = Query(..., description="S3 object key"),
+    expiration: int = Query(
+        3600, ge=1, le=86400, description="URL expiration time in seconds"
+    ),
+):
+    """
+    Generate a presigned URL for an S3 object.
+
+    This endpoint is used to get temporary access to audio files stored in S3.
+
+    Args:
+        bucket: S3 bucket name
+        key: S3 object key
+        expiration: URL expiration time in seconds
+
+    Returns:
+        Dictionary with the presigned URL
+    """
+    logger.info(f"Generating presigned URL for s3://{bucket}/{key}")
+
+    url = s3_service.generate_presigned_url(f"s3://{bucket}/{key}", expiration)
+
+    if not url:
+        raise HTTPException(status_code=404, detail="Failed to generate presigned URL")
+
+    return {"url": url}
+
+
+@router.get("/presigned-audio-url", response_model=Dict[str, str])
+async def get_presigned_audio_url(
+    s3_url: str = Query(..., description="S3 URL of the audio recording")
+):
+    """
+    Generate a presigned URL for an audio recording stored in S3.
+
+    Args:
+        s3_url: Full S3 URL (s3://bucket/key)
+
+    Returns:
+        Dict with presigned URL and content type
+    """
+    logger.info(f"Generating presigned URL for: {s3_url}")
+
+    try:
+        from ..services.s3_service import s3_service
+
+        # Validate S3 URL format
+        if not s3_url.startswith("s3://"):
+            logger.error(f"Invalid S3 URL format: {s3_url}")
+            raise HTTPException(
+                status_code=400, detail="Invalid S3 URL format, must start with s3://"
+            )
+
+        # Generate presigned URL
+        presigned_url = s3_service.generate_presigned_url(
+            s3_url, expiration=3600  # URL valid for 1 hour
+        )
+
+        if not presigned_url:
+            logger.error(f"Failed to generate presigned URL for {s3_url}")
+            raise HTTPException(
+                status_code=404,
+                detail="Failed to generate presigned URL or object not found",
+            )
+
+        # Determine content type based on file extension
+        content_type = "audio/wav"  # Default for WAV
+        if s3_url.endswith(".mp3"):
+            content_type = "audio/mpeg"
+        elif s3_url.endswith(".ogg"):
+            content_type = "audio/ogg"
+
+        return {"url": presigned_url, "contentType": content_type}
+
+    except Exception as e:
+        logger.error(f"Error generating presigned URL: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500, detail=f"Error generating presigned URL: {str(e)}"
+        )
+
+
 @router.get("/{report_id}", response_model=Dict[str, Any])
 async def get_report(report_id: str):
     """
@@ -126,37 +213,6 @@ async def create_aggregate_report(
         )
 
 
-@router.get("/s3-presigned-url", response_model=Dict[str, str])
-async def get_s3_presigned_url(
-    bucket: str = Query(..., description="S3 bucket name"),
-    key: str = Query(..., description="S3 object key"),
-    expiration: int = Query(
-        3600, ge=1, le=86400, description="URL expiration time in seconds"
-    ),
-):
-    """
-    Generate a presigned URL for an S3 object.
-
-    This endpoint is used to get temporary access to audio files stored in S3.
-
-    Args:
-        bucket: S3 bucket name
-        key: S3 object key
-        expiration: URL expiration time in seconds
-
-    Returns:
-        Dictionary with the presigned URL
-    """
-    logger.info(f"Generating presigned URL for s3://{bucket}/{key}")
-
-    url = s3_service.generate_presigned_url(f"s3://{bucket}/{key}", expiration)
-
-    if not url:
-        raise HTTPException(status_code=404, detail="Failed to generate presigned URL")
-
-    return {"url": url}
-
-
 @router.delete("/{report_id}", response_model=Dict[str, Any])
 async def delete_report(report_id: str):
     """
@@ -199,62 +255,6 @@ async def delete_report(report_id: str):
     except Exception as e:
         logger.error(f"Error deleting report {report_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting report: {str(e)}")
-
-
-@router.get("/presigned-audio-url", response_model=Dict[str, str])
-async def get_presigned_audio_url(
-    s3_url: str = Query(..., description="S3 URL of the audio recording")
-):
-    """
-    Generate a presigned URL for an audio recording stored in S3.
-
-    Args:
-        s3_url: Full S3 URL (s3://bucket/key)
-
-    Returns:
-        Dict with presigned URL and content type
-    """
-    logger.info(f"Generating presigned URL for: {s3_url}")
-
-    try:
-        from ..services.s3_service import s3_service
-
-        # Validate S3 URL format
-        if not s3_url.startswith("s3://"):
-            logger.error(f"Invalid S3 URL format: {s3_url}")
-            raise HTTPException(
-                status_code=400, detail="Invalid S3 URL format, must start with s3://"
-            )
-
-        # Generate presigned URL
-        presigned_url = s3_service.generate_presigned_url(
-            s3_url, expiration=3600  # URL valid for 1 hour
-        )
-
-        if not presigned_url:
-            logger.error(f"Failed to generate presigned URL for {s3_url}")
-            raise HTTPException(
-                status_code=404,
-                detail="Failed to generate presigned URL or object not found",
-            )
-
-        # Determine content type based on file extension
-        content_type = "audio/wav"  # Default for WAV
-        if s3_url.endswith(".mp3"):
-            content_type = "audio/mpeg"
-        elif s3_url.endswith(".ogg"):
-            content_type = "audio/ogg"
-
-        return {"url": presigned_url, "contentType": content_type}
-
-    except Exception as e:
-        logger.error(f"Error generating presigned URL: {str(e)}")
-        import traceback
-
-        logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=500, detail=f"Error generating presigned URL: {str(e)}"
-        )
 
 
 @router.get("/audio/{test_id}/{call_sid}/{filename}", response_class=FileResponse)
