@@ -1,76 +1,146 @@
 {
-    "personas": [
-      {
-        "name": "Tech-Savvy",
-        "traits": [
-          "knowledgeable",
-          "efficient",
-          "solution-oriented",
-          "independent",
-          "precise"
-        ]
-      },
-      {
-        "name": "Non-Native Speaker",
-        "traits": [
-          "careful with language",
-          "may need clarification",
-          "persistent",
-          "apologetic",
-          "attentive"
-        ]
-      },
-      {
-        "name": "First Time Customer",
-        "traits": [
-          "uncertain",
-          "inquisitive",
-          "careful",
-          "detail-seeking",
-          "needs reassurance"
-        ]
-      },
-      {
-        "name": "Accidental Customer",
-        "traits": [
-          "confused",
-          "potentially frustrated",
-          "uncertain",
-          "wanting clarification",
-          "may be embarrassed"
-        ]
-      }
-    ],
-    "behaviors": [
-      {
-        "name": "frustrated",
-        "characteristics": [
-          "shows impatience",
-          "may use stronger language",
-          "emphasizes urgency",
-          "references previous attempts",
-          "seeks immediate resolution"
-        ]
-      },
-      {
-        "name": "confused",
-        "characteristics": [
-          "asks for clarification",
-          "may repeat questions",
-          "expresses uncertainty",
-          "seeks confirmation",
-          "may misunderstand instructions"
-        ]
-      },
-      {
-        "name": "urgent",
-        "characteristics": [
-          "emphasizes time sensitivity",
-          "seeks immediate solutions",
-          "may interrupt",
-          "focused on quick resolution",
-          "may express consequences of delay"
-        ]
-      }
-    ]
-  }
+  "personas": [
+    {
+      "name": "Tech-Savvy Customer",
+      "traits": [
+        "knowledgeable",
+        "solution-focused",
+        "efficient",
+        "confident",
+        "precise"
+      ]
+    },
+    {
+      "name": "Elderly Customer",
+      "traits": [
+        "patient",
+        "needs clear explanations",
+        "methodical",
+        "courteous",
+        "may require repetition"
+      ]
+    },
+    {
+      "name": "Non-Native Speaker",
+      "traits": [
+        "careful with language",
+        "may need clarification",
+        "persistent",
+        "apologetic",
+        "determined"
+      ]
+    },
+    {
+      "name": "Busy Professional",
+      "traits": [
+        "concise",
+        "efficient",
+        "impatient",
+        "direct",
+        "values quick resolutions"
+      ]
+    },
+    {
+      "name": "New User",
+      "traits": [
+        "curious",
+        "uncertain",
+        "cautious",
+        "asks many questions",
+        "seeks reassurance"
+      ]
+    }
+  ],
+  "behaviors": [
+    {
+      "name": "Frustrated",
+      "characteristics": [
+        "expresses dissatisfaction clearly",
+        "raises voice",
+        "may interrupt",
+        "impatient",
+        "direct"
+      ]
+    },
+    {
+      "name": "Confused",
+      "characteristics": [
+        "asks repetitive questions",
+        "seeks reassurance",
+        "expresses uncertainty",
+        "requires detailed explanations",
+        "slow to understand"
+      ]
+    },
+    {
+      "name": "Urgent",
+      "characteristics": [
+        "emphasizes deadlines",
+        "interrupts politely",
+        "seeks immediate action",
+        "brief in responses",
+        "assertive"
+      ]
+    },
+    {
+      "name": "Friendly",
+      "characteristics": [
+        "positive tone",
+        "engages in small talk",
+        "patient",
+        "cooperative",
+        "appreciative"
+      ]
+    },
+    {
+      "name": "Skeptical",
+      "characteristics": [
+        "doubts solutions",
+        "asks probing questions",
+        "expresses mild skepticism",
+        "requests evidence",
+        "cautious"
+      ]
+    },
+    {
+      "name": "Anxious",
+      "characteristics": [
+        "expresses worry",
+        "frequently seeks confirmation",
+        "asks for repeated clarification",
+        "hesitant",
+        "speaks rapidly"
+      ]
+    },
+    {
+      "name": "Polite",
+      "characteristics": [
+        "courteous",
+        "uses polite language",
+        "respectful",
+        "patient",
+        "thanks frequently"
+      ]
+    },
+    {
+      "name": "Demanding",
+      "characteristics": [
+        "assertive",
+        "insistent on immediate action",
+        "less patient",
+        "sets high expectations",
+        "may escalate quickly"
+      ]
+    },
+    {
+      "name": "Hesitant",
+      "characteristics": [
+        "takes time before answering",
+        "seems unsure",
+        "asks for guidance",
+        "tentative language",
+        "slow responses"
+      ]
+    }
+  ]
+}
