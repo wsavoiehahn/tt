@@ -131,7 +131,9 @@ class TwilioService:
 
             # Create a simple TwiML for call initiation with better logging
             response = VoiceResponse()
-            response.say("Connecting to evaluation system...")
+            response.say(
+                "Connecting to evaluation system... Please begin speaking after this message."
+            )
 
             # Log TwiML content
             logger.debug(f"Generated TwiML: {str(response)}")
@@ -178,13 +180,6 @@ class TwilioService:
                     # Add optional parameters
                     record=True,
                 )
-
-                # outbound_twiml = (
-                #     f'<?xml version="1.0" encoding="UTF-8"?>'
-                #     f'<Response><Connect><Stream url="{websocket_url}/media-stream?test_id={test_id}" /></Connect></Response>'
-                # )
-                # call = self.client.calls.create(
-                #     from_=from_number, to=self.ai_service_number, twiml=outbound_twiml
 
                 logger.info(f"Call created successfully with SID: {call.sid}")
                 logger.info(f"Call direction: {call.direction}")
