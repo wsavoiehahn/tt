@@ -366,26 +366,68 @@ async function fetchPersonasAndBehaviors() {
         let behaviors = [];
         
         try {
-            // This endpoint might not exist, so we'll catch any errors
+            // Try to fetch from system-info endpoint
             const response = await fetch('/api/system-info');
             if (response.ok) {
                 const systemInfo = await response.json();
-                // Check if we can load personas and behaviors
-                if (systemInfo.personas) {
-                    personas = systemInfo.personas;
-                }
-                if (systemInfo.behaviors) {
-                    behaviors = systemInfo.behaviors;
+                // Check if we can load from system info
+                console.log('System info response:', systemInfo);
+                
+                if (systemInfo.personas_count && systemInfo.personas_count > 0) {
+                    // Since we know personas exist in the system, let's try to load them directly
+                    try {
+                        // Try loading directly from the JSON file
+                        const personaResponse = await fetch('/behaviorPersona.json');
+                        if (personaResponse.ok) {
+                            const personaData = await personaResponse.json();
+                            console.log('Loaded persona data:', personaData);
+                            
+                            if (personaData.personas && personaData.personas.length > 0) {
+                                personas = personaData.personas;
+                            }
+                            
+                            if (personaData.behaviors && personaData.behaviors.length > 0) {
+                                behaviors = personaData.behaviors;
+                            }
+                        } else {
+                            console.warn('Could not load behaviorPersona.json directly');
+                        }
+                    } catch (personaError) {
+                        console.warn('Error loading persona data directly:', personaError);
+                    }
                 }
             }
         } catch (error) {
-            console.log('Could not fetch from API, using hardcoded values');
+            console.warn('Could not fetch system info from API:', error);
         }
+        
+        // If we still don't have personas and behaviors, try a fallback endpoint
+        if (personas.length === 0 || behaviors.length === 0) {
+            try {
+                // Try a custom endpoint (you may need to create this in your FastAPI app)
+                const fallbackResponse = await fetch('/api/personas-behaviors');
+                if (fallbackResponse.ok) {
+                    const fallbackData = await fallbackResponse.json();
+                    if (fallbackData.personas && fallbackData.personas.length > 0) {
+                        personas = fallbackData.personas;
+                    }
+                    if (fallbackData.behaviors && fallbackData.behaviors.length > 0) {
+                        behaviors = fallbackData.behaviors;
+                    }
+                }
+            } catch (fallbackError) {
+                console.warn('Could not fetch from fallback endpoint:', fallbackError);
+            }
+        }
+        
+        console.log('Final personas to be used:', personas);
+        console.log('Final behaviors to be used:', behaviors);
         
         populateSelects(personas, behaviors);
         
     } catch (error) {
         console.error('Error fetching personas and behaviors:', error);
+        populateSelects(personas, behaviors);
     }
 }
 
@@ -557,9 +599,7 @@ async function createNewTest() {
     
     // Get questions
     const questionInputs = document.querySelectorAll('.question-input');
-    const questions = Array.from(questionInputs).map(input => ({
-        text: input.value,
-    }));
+    const questions = Array.from(questionInputs).map(input => input.value); // Just get the question text values
     
     // Construct test case object
     const testCase = {
@@ -568,7 +608,7 @@ async function createNewTest() {
         config: {
             persona_name: personaName,
             behavior_name: behaviorName,
-            questions: questions,
+            questions: questions, // Array of strings, not objects with 'text' property
             special_instructions: specialInstructions || null,
             max_turns: 4
         }

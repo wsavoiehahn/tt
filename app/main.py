@@ -284,6 +284,26 @@ async def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
 
+@app.get("/api/personas-behaviors")
+async def get_personas_behaviors():
+    """Get personas and behaviors data."""
+    try:
+        # Use the config service to load the data
+        from .config import config
+
+        # Load personas data
+        personas_data = config.load_personas()
+
+        # Return the full data structure
+        return personas_data
+    except Exception as e:
+        logger.error(f"Error loading personas and behaviors: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Error loading personas and behaviors: {str(e)}"},
+        )
+
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""
