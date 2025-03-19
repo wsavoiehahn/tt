@@ -213,8 +213,18 @@ async def handle_media_stream(websocket: WebSocket):
             },
         ) as openai_ws:
             # Initialize the session with a default prompt (we don't have test_id yet)
-            await initialize_session(openai_ws)
+
             logger.info("OpenAI session initialized")
+
+            # this is a hack to get the test_id customParameter early on, since in twilio it can only be found
+            async for message in websocket.iter_text():
+                data = json.loads(message)
+                if data["event"] == "start":
+                    stream_sid = data["start"]["streamSid"]
+                    call_sid = data["start"]["callSid"]
+                    test_id = data["start"].get("customParameters", {}).get("test_id")
+                    break
+            await initialize_session(openai_ws, test_id)
 
             async def agent_audio():
                 """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
@@ -343,14 +353,14 @@ async def handle_media_stream(websocket: WebSocket):
                                     text,
                                     test_id,
                                     call_sid,
-                                    "agent",
+                                    current_speaker,
                                     agent_turn_count,
                                 )
 
                                 # Append to full conversation
                                 full_text_conversation.append(
                                     {
-                                        "speaker": "agent",
+                                        "speaker": current_speaker,
                                         "text": text,
                                         "timestamp": datetime.now().isoformat(),
                                     }
@@ -363,7 +373,7 @@ async def handle_media_stream(websocket: WebSocket):
                                         bytes(agent_audio_buffer),
                                         test_id,
                                         call_sid,
-                                        "agent",
+                                        current_speaker,
                                         agent_turn_count,
                                     )
 
@@ -371,7 +381,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                                 # Add to conversation history once
                                 turn_data = {
-                                    "speaker": "agent",
+                                    "speaker": current_speaker,
                                     "text": text,
                                     "timestamp": datetime.now().isoformat(),
                                     "transcription_url": transcript_url,
@@ -787,7 +797,7 @@ async def update_stream_sid(connection_id: str, stream_sid: str):
         logger.error(f"Updated stream_sid for connection {connection_id}: {stream_sid}")
 
 
-async def initialize_session(openai_ws):
+async def initialize_session(openai_ws, test_id):
 
     session_update = {
         "type": "session.update",
@@ -796,7 +806,7 @@ async def initialize_session(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": _create_system_prompt(),
+            "instructions": _create_system_prompt(test_id),
             "modalities": ["text", "audio"],
             "temperature": 0.7,
             "input_audio_transcription": {"model": "whisper-1", "language": "en"},
@@ -821,13 +831,15 @@ async def initialize_session(openai_ws):
     # await send_initial_conversation_item(openai_ws)
 
 
-def _create_system_prompt() -> str:
+def _create_system_prompt(test_id) -> str:
     """Create a system prompt based on persona, behavior, and question."""
     # Import knowledge base
     from app.services.evaluator import evaluator_service
 
     # I decided I was going to use only a single test ever and I don't want to refactor the entire codebase so this ugly bit of code will remain
-    test_case = list(evaluator_service.active_tests.values())[0]["test_case"]
+    # TODO figure out how to get the testid so I dont need to do this hack
+    # test_case = list(evaluator_service.active_tests.values())[0]["test_case"]
+    test_case = evaluator_service.active_tests[test_id]["test_case"]
     persona_name = test_case["config"]["persona_name"]
     behavior_name = test_case["config"]["behavior_name"]
     question = test_case["config"]["questions"][0]  # assume only 1 question
