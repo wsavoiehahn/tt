@@ -131,9 +131,7 @@ class TwilioService:
 
             # Create a simple TwiML for call initiation with better logging
             response = VoiceResponse()
-            response.say(
-                "Connecting to evaluation system... Please begin speaking after this message."
-            )
+            response.say("Speak Now.")
 
             # Log TwiML content
             logger.debug(f"Generated TwiML: {str(response)}")

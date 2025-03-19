@@ -235,6 +235,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                         data = json.loads(message)
                         if data["event"] == "media" and openai_ws.state == State.OPEN:
+                            # If switching from evaluator → agent, clear agent buffer immediately
                             current_speaker = "agent"
                             audio_payload = data["media"]["payload"]
                             try:

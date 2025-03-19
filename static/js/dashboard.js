@@ -365,46 +365,8 @@ async function fetchPersonasAndBehaviors() {
         let personas = [];
         let behaviors = [];
         
-        try {
-            // Try to fetch from system-info endpoint
-            const response = await fetch('/api/system-info');
-            if (response.ok) {
-                const systemInfo = await response.json();
-                // Check if we can load from system info
-                console.log('System info response:', systemInfo);
-                
-                if (systemInfo.personas_count && systemInfo.personas_count > 0) {
-                    // Since we know personas exist in the system, let's try to load them directly
-                    try {
-                        // Try loading directly from the JSON file
-                        const personaResponse = await fetch('/behaviorPersona.json');
-                        if (personaResponse.ok) {
-                            const personaData = await personaResponse.json();
-                            console.log('Loaded persona data:', personaData);
-                            
-                            if (personaData.personas && personaData.personas.length > 0) {
-                                personas = personaData.personas;
-                            }
-                            
-                            if (personaData.behaviors && personaData.behaviors.length > 0) {
-                                behaviors = personaData.behaviors;
-                            }
-                        } else {
-                            console.warn('Could not load behaviorPersona.json directly');
-                        }
-                    } catch (personaError) {
-                        console.warn('Error loading persona data directly:', personaError);
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn('Could not fetch system info from API:', error);
-        }
-        
-        // If we still don't have personas and behaviors, try a fallback endpoint
         if (personas.length === 0 || behaviors.length === 0) {
             try {
-                // Try a custom endpoint (you may need to create this in your FastAPI app)
                 const fallbackResponse = await fetch('/api/personas-behaviors');
                 if (fallbackResponse.ok) {
                     const fallbackData = await fallbackResponse.json();
