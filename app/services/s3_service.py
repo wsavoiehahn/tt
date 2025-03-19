@@ -6,6 +6,9 @@ from botocore.exceptions import ClientError
 from typing import Dict, Any, List, Union, BinaryIO
 from datetime import datetime
 import os
+import io
+import wave
+import audioop
 
 logger = logging.getLogger(__name__)
 
@@ -42,34 +45,30 @@ class S3Service:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{turn_number}_{speaker}_{timestamp}.wav"
         key = f"tests/{test_id}/calls/{call_sid}/audio/{filename}"
-
         try:
             logger.info(f"Saving audio to S3: bucket={self.bucket_name}, key={key}")
 
-            # Make sure the audio data is valid
-            if isinstance(audio_data, bytes):
-                if len(audio_data) == 0:
-                    logger.warning("Empty audio data provided, not saving to S3")
-                    return ""
+            pcm_audio = audioop.ulaw2lin(audio_data, 2)  # 2 bytes = 16 bits PCM
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, "wb") as wav_file:
+                wav_file_format = "g711_ulaw"
+                wav_file_sample_rate = 8000  # Sampling rate: 8000 Hz
+                wav_sample_width = 2  # For G711 u-law, 16 bits PCM is standard
 
-                # Upload the data
-                self.s3_client.put_object(
-                    Bucket=self.bucket_name,
-                    Key=key,
-                    Body=audio_data,
-                    ContentType="audio/wav",
-                )
-                logger.info(f"Successfully saved {len(audio_data)} bytes of audio data")
-            else:
-                # File-like object
-                self.s3_client.upload_fileobj(
-                    audio_data,
-                    self.bucket_name,
-                    key,
-                    ExtraArgs={"ContentType": "audio/wav"},
-                )
-                logger.info("Successfully saved audio file")
+                wav_file.setnchannels(1)  # Mono channel
+                wav_file.setsampwidth(wav_sample_width)
+                wav_file.setframerate(wav_file_sample_rate)
+                # Write audio frames
+                wav_file.writeframes(pcm_audio)
 
+            wav_buffer = wav_buffer.getvalue()
+
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=key,
+                Body=wav_buffer,
+                ContentType="audio/wav",
+            )
             # Return S3 URL
             s3_url = f"s3://{self.bucket_name}/{key}"
             logger.info(f"Audio saved to: {s3_url}")
