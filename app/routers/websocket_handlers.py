@@ -14,7 +14,6 @@ from twilio.rest import Client
 from app.config import config
 from app.services.dynamodb_service import dynamodb_service
 
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,16 +39,14 @@ LOG_EVENT_TYPES = [
 active_connections = {}
 
 
-# Add this function to save audio to S3
 async def save_audio_chunk(audio_data, test_id, call_sid, speaker, turn_number=None):
     """Save an audio chunk to S3 and return the S3 URL."""
     try:
         from app.services.s3_service import s3_service
+        from app.services.evaluator import evaluator_service
 
         # If turn_number is not provided, try to determine it
         if turn_number is None:
-            from app.services.evaluator import evaluator_service
-
             if test_id in evaluator_service.active_tests:
                 conversation = evaluator_service.active_tests[test_id].get(
                     "conversation", []
@@ -151,7 +148,9 @@ async def save_transcription(text, test_id, call_sid, speaker, turn_number=None)
         return None
 
 
-async def register_connection(websocket: WebSocket, test_id: str, call_sid: str):
+async def register_connection(
+    websocket: WebSocket, test_id: str, call_sid: str, openai_ws
+):
     """Register a new WebSocket connection"""
     connection_id = f"{call_sid}_{test_id}"
     active_connections[connection_id] = {
@@ -159,7 +158,7 @@ async def register_connection(websocket: WebSocket, test_id: str, call_sid: str)
         "test_id": test_id,
         "call_sid": call_sid,
         "connected_at": "connected",
-        "openai_ws": None,
+        "openai_ws": openai_ws,
     }
     logger.info(f"Registered new connection: {connection_id}")
     return connection_id
@@ -176,7 +175,7 @@ async def handle_media_stream(websocket: WebSocket):
     full_text_conversation = []
     test_id = None
     call_sid = None
-    current_speaker = None
+    current_speaker = "agent"
     last_transcription_time = datetime.now()
 
     # Track conversation turns by speaker
@@ -223,6 +222,7 @@ async def handle_media_stream(websocket: WebSocket):
                     stream_sid = data["start"]["streamSid"]
                     call_sid = data["start"]["callSid"]
                     test_id = data["start"].get("customParameters", {}).get("test_id")
+                    await register_connection(websocket, test_id, call_sid, openai_ws)
                     break
             await initialize_session(openai_ws, test_id)
 
@@ -283,7 +283,7 @@ async def handle_media_stream(websocket: WebSocket):
                             if mark_queue:
                                 mark_queue.pop(0)
                         elif data["event"] == "stop" and test_id and call_sid:
-                            logging.info("This only happens when I hangup the call")
+                            logging.error("The caller hungup the call")
 
                             agent_turn_count += 1
                             # Save the accumulated agent audio
@@ -295,6 +295,7 @@ async def handle_media_stream(websocket: WebSocket):
                                     call_sid,
                                     current_speaker,
                                 )
+
                                 # Find the last agent turn and update with audio URL
                                 if test_id in evaluator_service.active_tests:
                                     conversation = evaluator_service.active_tests[
@@ -312,6 +313,7 @@ async def handle_media_stream(websocket: WebSocket):
                                         test_id,
                                         evaluator_service.active_tests[test_id],
                                     )
+
                 except (WebSocketDisconnect, RuntimeError) as e:
                     logger.warning(f"agent_audio: WebSocket error: {e}")
                     if openai_ws.state == State.OPEN:
@@ -802,7 +804,11 @@ async def initialize_session(openai_ws, test_id):
     session_update = {
         "type": "session.update",
         "session": {
-            "turn_detection": {"type": "server_vad"},
+            "turn_detection": {
+                "type": "server_vad",
+                "silence_duration_ms": 1000,  # Wait longer to detect silence default is 500
+                "threshold": 0.55,  # indicates how sensitive the voice detection is to audio signals, default is 0.5
+            },
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
@@ -836,9 +842,6 @@ def _create_system_prompt(test_id) -> str:
     # Import knowledge base
     from app.services.evaluator import evaluator_service
 
-    # I decided I was going to use only a single test ever and I don't want to refactor the entire codebase so this ugly bit of code will remain
-    # TODO figure out how to get the testid so I dont need to do this hack
-    # test_case = list(evaluator_service.active_tests.values())[0]["test_case"]
     test_case = evaluator_service.active_tests[test_id]["test_case"]
     persona_name = test_case["config"]["persona_name"]
     behavior_name = test_case["config"]["behavior_name"]
@@ -847,16 +850,16 @@ def _create_system_prompt(test_id) -> str:
     persona_traits = ", ".join(config.get_persona_traits(persona_name))
     behavior_chars = ", ".join(config.get_behavior_characteristics(behavior_name))
     special_instructions = test_case["config"]["special_instructions"]
+    max_turns = test_case["config"]["max_turns"]
     return f"""
-        You are simulating a customer with the following persona: {persona_name}
-        Traits: {persona_traits}
+        You are a customer calling an help desk. You have a problem you are trying to resolve. You have the following persona: {persona_name} and traits: {persona_traits}.
         
-        You are currently exhibiting the following behavior: {behavior_name}
-        Characteristics: {behavior_chars}
-        
-        You have hidden special instructions: {special_instructions}
-        You are calling an AI customer service agent.
-        You need to ask about the following question: "{question}"
+        You should exhibit the following behavior: {behavior_name}, which has the following characteristics: {behavior_chars}.
+
+        You have hidden special instructions: {special_instructions}.
+        You need to ask about the following question: "{question}".
+
+        Each time you respond, consider that to be a single turn. After responding for more than "{max_turns}" turns, you should say "goodbye" in your next message, regardless of how the conversation is proceeding.
         
         Use natural, conversational language appropriate for your persona and behavior.
         Respond to the agent's questions and provide information as needed, but stay in character.

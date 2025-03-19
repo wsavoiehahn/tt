@@ -84,19 +84,14 @@ class EvaluatorService:
         """Get a persona by name."""
         for persona in self.personas_data.get("personas", []):
             if persona.get("name") == persona_name:
-                return Persona(
-                    name=persona.get("name", ""), traits=persona.get("traits", [])
-                )
+                return persona
         return None
 
     def get_behavior(self, behavior_name: str) -> Optional[Behavior]:
         """Get a behavior by name."""
         for behavior in self.personas_data.get("behaviors", []):
             if behavior.get("name") == behavior_name:
-                return Behavior(
-                    name=behavior.get("name", ""),
-                    characteristics=behavior.get("characteristics", []),
-                )
+                return behavior
         return None
 
     def _mark_test_as_failed_and_update_dynamo(self, test_id, error, action="failed"):

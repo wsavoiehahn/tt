@@ -16,8 +16,8 @@ class KnowledgeBase(BaseModel):
 
 
 class TestCaseConfig(BaseModel):
-    persona_name: str = "Tech-Savvy"
-    behavior_name: str = "frustrated"
+    persona_name: str = "Tech-Savvy Customer"
+    behavior_name: str = "Frustrated"
     questions: List[str] = ["How can I find my member ID?"]
     special_instructions: Optional[str] = None
     max_turns: int = 4  # Default max conversation turns after main question
