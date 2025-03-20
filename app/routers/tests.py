@@ -9,7 +9,7 @@ from fastapi import (
 from typing import List, Dict, Any
 import uuid
 
-from app.models.test_cases import TestCase, TestSuite
+from app.models.test_cases import TestCase
 from app.services.evaluator import evaluator_service
 from app.services.s3_service import s3_service
 from app.services.reporting import reporting_service
@@ -111,34 +111,6 @@ async def debug_test(test_id: str):
 
         logger.error(traceback.format_exc())
         return {"error": str(e)}
-
-
-@router.post("/suite", response_model=Dict[str, Any])
-async def create_test_suite(test_suite: TestSuite, background_tasks: BackgroundTasks):
-    """Create and execute a test suite (multiple test cases)."""
-    logger.info(
-        f"Creating test suite: {test_suite.name} with {len(test_suite.test_cases)} test cases"
-    )
-
-    # Save the test suite
-    suite_id = str(test_suite.id)
-    s3_key = f"test-suites/{suite_id}.json"
-    s3_service.s3_client.put_object(
-        Bucket=s3_service.bucket_name,
-        Key=s3_key,
-        Body=s3_service.json.dumps(test_suite.dict(), default=str).encode("utf-8"),
-        ContentType="application/json",
-    )
-
-    # Execute each test case in the background
-    for test_case in test_suite.test_cases:
-        background_tasks.add_task(evaluator_service.execute_test_case, test_case)
-
-    return {
-        "message": f"Test suite created with {len(test_suite.test_cases)} test cases",
-        "test_suite_id": suite_id,
-        "test_case_ids": [str(tc.id) for tc in test_suite.test_cases],
-    }
 
 
 @router.get("/{test_id}/status", response_model=Dict[str, Any])
