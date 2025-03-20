@@ -719,7 +719,7 @@ async def handle_media_stream(websocket: WebSocket):
                             test_id, evaluator_service.active_tests[test_id]
                         )
 
-                    logger.info(
+                    logger.debug(
                         f"Full text conversation saved to: s3://{s3_service.bucket_name}/{key}"
                     )
                 except Exception as e:
@@ -758,7 +758,7 @@ async def handle_media_stream(websocket: WebSocket):
                         ContentType="audio/wav",
                     )
                     full_recording_url = f"s3://{s3_service.bucket_name}/{key}"
-                    logger.info(
+                    logger.debug(
                         f"Full conversation recording saved to: {full_recording_url}"
                     )
                 except Exception as e:
@@ -784,9 +784,9 @@ async def handle_media_stream(websocket: WebSocket):
                                 f"Turn {i}: {turn.get('speaker')} - {turn.get('text')[:50]}..."
                             )
                             if "audio_url" in turn:
-                                logger.info(f"  Audio URL: {turn.get('audio_url')}")
+                                logger.debug(f"  Audio URL: {turn.get('audio_url')}")
                             if "transcription_url" in turn:
-                                logger.info(
+                                logger.debug(
                                     f"  Transcript URL: {turn.get('transcription_url')}"
                                 )
 

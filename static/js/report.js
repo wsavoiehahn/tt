@@ -43,6 +43,9 @@ document.addEventListener('DOMContentLoaded', async function() {
           window.open(`/api/reports/${reportId}/html`, '_blank');
         });
       }
+
+
+      
     } catch (error) {
       console.error('Error in DOMContentLoaded:', error);
       showError(`Failed to load report: ${error.message}`);
@@ -81,6 +84,32 @@ async function fetchReportData(reportId) {
   document.getElementById('reportContent').style.display = 'block';
 }
 
+document.getElementById('refreshReportBtn').addEventListener('click', async function() {
+    const reportId = getReportIdFromUrl();
+    if (!reportId) return;
+    
+    // Show loading spinner
+    this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Refreshing...';
+    this.disabled = true;
+    
+    try {
+      // Force fetch fresh data
+      const response = await fetch(`/api/reports/${reportId}?_=${Date.now()}`);
+      if (response.ok) {
+        const report = await response.json();
+        window.currentReport = report;
+        populateReportDetails(report);
+        console.log("Report data refreshed");
+      }
+    } catch (error) {
+      console.error("Error refreshing report:", error);
+    } finally {
+      // Restore button state
+      this.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Conversation';
+      this.disabled = false;
+    }
+  });
+  
 // Display error message in the UI
 function showError(message) {
   document.getElementById('reportContent').innerHTML = `
