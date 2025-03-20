@@ -7,7 +7,7 @@ from fastapi import (
     Query,
 )
 from typing import List, Dict, Any
-from uuid import UUID
+import uuid
 
 from app.models.test_cases import TestCase, TestSuite
 from app.services.evaluator import evaluator_service
@@ -27,7 +27,21 @@ logger = logging.getLogger(__name__)
 @router.post("/", response_model=Dict[str, Any])
 async def create_test(test_case: TestCase, background_tasks: BackgroundTasks):
     """Create and execute a test case."""
-    logger.info(f"Creating test case: {test_case.name}")
+    logger.info(f"Creating test case: {test_case.name}, with id {test_case.id}")
+
+    # Check if the test ID already exists in S3 or DynamoDB to prevent reuse
+    test_id = str(test_case.id)
+
+    # Check S3 for existing test
+    try:
+        existing_test = s3_service.get_json(f"tests/{test_id}/config.json")
+        if existing_test:
+            # If the ID exists, generate a new UUID instead
+            test_case.id = uuid.uuid4()
+            logger.info(f"ID already exists, generated new UUID: {test_case.id}")
+    except Exception:
+        # If error checking, assume it doesn't exist
+        pass
 
     # Save the test case
     s3_service.save_test_case(test_case.dict(), str(test_case.id))
@@ -128,7 +142,7 @@ async def create_test_suite(test_suite: TestSuite, background_tasks: BackgroundT
 
 
 @router.get("/{test_id}/status", response_model=Dict[str, Any])
-async def get_test_status(test_id: UUID):
+async def get_test_status(test_id: uuid.UUID):
     """Get the status of a test case execution."""
     logger.info(f"Getting status for test ID: {test_id}")
     test_id_str = str(test_id)
@@ -165,7 +179,7 @@ async def get_test_status(test_id: UUID):
 
 
 @router.delete("/{test_id}", response_model=Dict[str, Any])
-async def delete_test(test_id: UUID):
+async def delete_test(test_id: uuid.UUID):
     """Delete a test case and its associated resources."""
     logger.info(f"Deleting test case with ID: {test_id}")
     test_id_str = str(test_id)

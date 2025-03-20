@@ -115,6 +115,10 @@ class TwilioService:
         Initiate a call to the AI service agent with the test questions.
         """
         try:
+            if not test_id:
+                logger.error("Attempted to initiate call with missing test_id")
+                return {"error": "Missing test_id", "status": "failed"}
+
             logger.info(f"Initiating call for test_id: {test_id}")
 
             # Get outbound number
@@ -124,12 +128,9 @@ class TwilioService:
 
             # Import at function level to avoid circular imports
             from ..services.evaluator import evaluator_service
-
-            # Check if the test exists in active_tests before attempting to update
-
             from ..services.dynamodb_service import dynamodb_service
 
-            # Create a simple TwiML for call initiation with better logging
+            # Create a simple TwiML for call initiation
             response = VoiceResponse()
             response.say("Speak Now.")
 
@@ -143,53 +144,44 @@ class TwilioService:
             websocket_url = os.environ.get("WEBSOCKET_ENDPOINT")
             logger.info(f"Status callback URL: {status_callback_url}")
 
-            # Initiate the call with the simplified TwiML
-            try:
-                logger.info(
-                    f"Initiating call to {self.ai_service_number} from {from_number}"
-                )
-                # CALL STARTS HERE
-                connect = Connect()
-                stream = Stream(url=f"{websocket_url}/media-stream")
-                stream.parameter(name="test_id", value=test_id)
-                connect.append(stream)
-                response.append(connect)
-                logger.info(f"Generated TwiML: {str(response)}")
-                # Create the call with all parameters
-                call = self.client.calls.create(
-                    to=self.ai_service_number,
-                    from_=from_number,
-                    twiml=str(response),
-                    status_callback=status_callback_url,
-                    status_callback_event=[
-                        # "queued",
-                        "initiated",
-                        "ringing",
-                        "answered",
-                        "completed",
-                    ],
-                    status_callback_method="POST",
-                    method="POST",
-                    machine_detection="Enable",
-                    machine_detection_timeout=30,
-                    machine_detection_speech_threshold=2500,
-                    machine_detection_speech_end_threshold=1000,
-                    machine_detection_silence_timeout=5000,
-                    # Add optional parameters
-                    record=True,
-                )
+            # Critical part: Ensure test_id is properly passed to the WebSocket
+            connect = Connect()
+            stream = Stream(url=f"{websocket_url}/media-stream")
 
-                logger.info(f"Call created successfully with SID: {call.sid}")
-                logger.info(f"Call direction: {call.direction}")
-            except Exception as call_error:
-                logger.error(f"Twilio API error creating call: {str(call_error)}")
-                return {
-                    "error": f"Twilio error: {str(call_error)}",
-                    "test_id": test_id,
-                    "status": "failed",
-                }
+            # Explicitly pass test_id as a parameter
+            stream.parameter(name="test_id", value=test_id)
+            logger.info(f"Added test_id parameter to Twilio stream: {test_id}")
 
-            # Store call information
+            connect.append(stream)
+            response.append(connect)
+
+            # Create the call with all parameters
+            call = self.client.calls.create(
+                to=self.ai_service_number,
+                from_=from_number,
+                twiml=str(response),
+                status_callback=status_callback_url,
+                status_callback_event=[
+                    "initiated",
+                    "ringing",
+                    "answered",
+                    "completed",
+                ],
+                status_callback_method="POST",
+                method="POST",
+                machine_detection="Enable",
+                machine_detection_timeout=30,
+                machine_detection_speech_threshold=2500,
+                machine_detection_speech_end_threshold=1000,
+                machine_detection_silence_timeout=5000,
+                record=True,
+            )
+
+            logger.info(
+                f"Call created successfully with SID: {call.sid} for test_id: {test_id}"
+            )
+
+            # Store call information with additional logging
             self.active_calls[call.sid] = {
                 "test_id": test_id,
                 "status": "initiated",
@@ -198,20 +190,26 @@ class TwilioService:
                 "from": from_number,
             }
 
-            logger.info(
-                f"Call initiated: {call.sid} for test {test_id} to {self.ai_service_number}"
-            )
-
             # Update test data with call information
             try:
+                if test_id not in evaluator_service.active_tests:
+                    logger.warning(f"Test {test_id} not in active_tests, initializing")
+                    evaluator_service.active_tests[test_id] = {
+                        "status": "waiting_for_call",
+                        "start_time": time.time(),
+                        "test_case": {},  # This will be populated later
+                        "execution_details": [],
+                    }
+
                 evaluator_service.active_tests[test_id]["call_sid"] = call.sid
                 evaluator_service.active_tests[test_id]["call_status"] = call.status
 
                 # Update in DynamoDB
-                from ..services.dynamodb_service import dynamodb_service
-
                 dynamodb_service.save_test(
                     test_id, evaluator_service.active_tests[test_id]
+                )
+                logger.info(
+                    f"Updated test {test_id} in DynamoDB with call_sid: {call.sid}"
                 )
             except Exception as update_error:
                 logger.error(f"Error updating test with call SID: {str(update_error)}")

@@ -191,6 +191,7 @@ async def handle_media_stream(websocket: WebSocket):
     last_assistant_item = None
     mark_queue = []
     response_start_timestamp_twilio = None
+    openai_ws = None
 
     async def send_mark(connection, stream_sid):
         if stream_sid:
@@ -222,6 +223,10 @@ async def handle_media_stream(websocket: WebSocket):
                     stream_sid = data["start"]["streamSid"]
                     call_sid = data["start"]["callSid"]
                     test_id = data["start"].get("customParameters", {}).get("test_id")
+                    logger.info(
+                        f"Received start event with test_id: {test_id}, call_sid: {call_sid}"
+                    )
+
                     await register_connection(websocket, test_id, call_sid, openai_ws)
                     break
             await initialize_session(openai_ws, test_id)

@@ -42,6 +42,10 @@ class S3Service:
         Returns:
             S3 URL for the saved audio
         """
+        if not test_id:
+            logger.error("Missing test_id when saving transcription")
+            return ""
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{turn_number}_{speaker}_{timestamp}.wav"
         key = f"tests/{test_id}/calls/{call_sid}/audio/{filename}"
@@ -142,6 +146,11 @@ class S3Service:
         Returns:
             S3 URL for the saved transcription
         """
+
+        if not test_id:
+            logger.error("Missing test_id when saving transcription")
+            return ""
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         key = f"tests/{test_id}/calls/{call_sid}/transcripts/{turn_number}_{speaker}_{timestamp}.txt"
 

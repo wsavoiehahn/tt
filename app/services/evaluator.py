@@ -713,68 +713,60 @@ class EvaluatorService:
         audio_url: Optional[str] = None,
     ):
         """
-        Record a turn in the conversation with enhanced audio support.
+        Record a turn in the conversation with enhanced audio support and better error handling.
         Only adds a new turn if it doesn't match the last turn for this speaker.
         """
-        if test_id in self.active_tests:
-            if "conversation" not in self.active_tests[test_id]:
-                self.active_tests[test_id]["conversation"] = []
+        if not test_id:
+            logger.error("Attempted to record conversation turn with missing test_id")
+            return None
 
-            # Check if we already have this turn (prevent duplication)
-            conversation = self.active_tests[test_id]["conversation"]
-
-            # Look for duplicate turns with same speaker and similar text
-            for turn in reversed(conversation):
-                if turn.get("speaker") == speaker and turn.get("text") and text:
-                    # Compare text similarity (simple check - first 10 chars)
-                    if turn["text"][:10] == text[:10]:
-                        # This appears to be a duplicate, just update with any new info
-                        if audio_url and not turn.get("audio_url"):
-                            turn["audio_url"] = audio_url
-                            logger.info(
-                                f"Updated existing turn with audio URL for {speaker}"
-                            )
-
-                            # Update in DynamoDB
-                            from app.services.dynamodb_service import dynamodb_service
-
-                            dynamodb_service.save_test(
-                                test_id, self.active_tests[test_id]
-                            )
-
-                        return turn  # Return the existing turn, no new turn created
-
-            # No duplicate found, create a new turn
-            turn = {
-                "speaker": speaker,
-                "text": text,
-                "timestamp": datetime.now().isoformat(),
+        # Ensure the test exists in active_tests
+        if test_id not in self.active_tests:
+            logger.warning(f"Test {test_id} not found in active_tests, initializing")
+            self.active_tests[test_id] = {
+                "status": "in_progress",
+                "call_sid": call_sid,
+                "start_time": datetime.now().isoformat(),
+                "conversation": [],
             }
 
-            if audio_url:
-                turn["audio_url"] = audio_url
+            # Save to DynamoDB immediately to establish record
+            from app.services.dynamodb_service import dynamodb_service
 
-            # Add to conversation
-            self.active_tests[test_id]["conversation"].append(turn)
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
 
-            # Update test in DynamoDB to persist conversation state
-            try:
-                from app.services.dynamodb_service import dynamodb_service
+        # Initialize conversation array if needed
+        if "conversation" not in self.active_tests[test_id]:
+            self.active_tests[test_id]["conversation"] = []
 
-                dynamodb_service.save_test(test_id, self.active_tests[test_id])
-                logger.info(
-                    f"Saved new conversation turn to DynamoDB for test {test_id}"
-                )
-            except Exception as e:
-                logger.error(f"Error saving conversation turn to DynamoDB: {str(e)}")
-                import traceback
+        # Check if we already have this turn (prevent duplication)
+        conversation = self.active_tests[test_id]["conversation"]
 
-                logger.error(f"Traceback: {traceback.format_exc()}")
+        # Use timestamp with microseconds for uniqueness
+        timestamp = datetime.now().isoformat(timespec="microseconds")
 
-            return turn
-        else:
-            logger.warning(f"Test {test_id} not found for recording conversation turn")
-            return None
+        # Create a new turn with timestamp
+        turn = {"speaker": speaker, "text": text, "timestamp": timestamp}
+
+        if audio_url:
+            turn["audio_url"] = audio_url
+
+        # Add to conversation
+        self.active_tests[test_id]["conversation"].append(turn)
+
+        # Update test in DynamoDB to persist conversation state
+        try:
+            from app.services.dynamodb_service import dynamodb_service
+
+            dynamodb_service.save_test(test_id, self.active_tests[test_id])
+            logger.info(f"Saved new conversation turn to DynamoDB for test {test_id}")
+        except Exception as e:
+            logger.error(f"Error saving conversation turn to DynamoDB: {str(e)}")
+            import traceback
+
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
+        return turn
 
     def _create_evaluation_prompt(
         self,
