@@ -50,7 +50,7 @@ class S3Service:
         filename = f"{turn_number}_{speaker}_{timestamp}.wav"
         key = f"tests/{test_id}/calls/{call_sid}/audio/{filename}"
         try:
-            logger.info(f"Saving audio to S3: bucket={self.bucket_name}, key={key}")
+            logger.debug(f"Saving audio to S3: bucket={self.bucket_name}, key={key}")
 
             pcm_audio = audioop.ulaw2lin(audio_data, 2)  # 2 bytes = 16 bits PCM
             wav_buffer = io.BytesIO()
@@ -156,7 +156,7 @@ class S3Service:
 
         try:
             # Log what we're trying to do
-            logger.info(
+            logger.debug(
                 f"Saving transcription to S3: bucket={self.bucket_name}, key={key}"
             )
 
@@ -176,7 +176,7 @@ class S3Service:
                     Body=transcription_bytes,
                     ContentType="text/plain",
                 )
-                logger.info(
+                logger.debug(
                     f"Successfully saved {len(transcription_bytes)} bytes of transcription data"
                 )
             except Exception as upload_error:
@@ -188,7 +188,7 @@ class S3Service:
 
             # Return S3 URL
             s3_url = f"s3://{self.bucket_name}/{key}"
-            logger.info(f"Transcription saved to: {s3_url}")
+            logger.debug(f"Transcription saved to: {s3_url}")
             return s3_url
         except Exception as e:
             logger.error(f"Error saving transcription to S3: {str(e)}")
@@ -221,7 +221,7 @@ class S3Service:
                 ContentType="application/json",
             )
 
-            logger.info(f"Saved report {report_id} to S3 path: {key}")
+            logger.debug(f"Saved report {report_id} to S3 path: {key}")
 
             return f"s3://{self.bucket_name}/{key}"
         except ClientError as e:
@@ -248,7 +248,7 @@ class S3Service:
                 Body=json.dumps(test_case_data, default=str).encode("utf-8"),
                 ContentType="application/json",
             )
-            logger.info(f"Test case saved to S3 for test {test_id}")
+            logger.debug(f"Test case saved to S3 for test {test_id}")
             return f"s3://{self.bucket_name}/{key}"
         except ClientError as e:
             logger.error(f"Error saving test case to S3: {str(e)}")

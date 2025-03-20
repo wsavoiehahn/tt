@@ -70,7 +70,7 @@ class DynamoDBService:
                     "status": test_data.get("status", "unknown"),
                 }
             )
-            logger.info(f"Test {test_id} saved to DynamoDB")
+            logger.debug(f"Test {test_id} saved to DynamoDB")
             return True
         except Exception as e:
             logger.error(f"Error saving test to DynamoDB: {str(e)}")
@@ -99,7 +99,7 @@ class DynamoDBService:
 
             # Parse the stored JSON
             test_data = json.loads(response["Item"]["test_data"])
-            logger.info(f"Retrieved test {test_id} from DynamoDB")
+            logger.debug(f"Retrieved test {test_id} from DynamoDB")
             return test_data
         except Exception as e:
             logger.error(f"Error getting test from DynamoDB: {str(e)}")
@@ -125,7 +125,7 @@ class DynamoDBService:
                 ExpressionAttributeValues={":status": status},
                 ReturnValues="UPDATED_NEW",
             )
-            logger.info(f"Updated test {test_id} status in DynamoDB")
+            logger.debug(f"Updated test {test_id} status in DynamoDB")
             return True
         except Exception as e:
             logger.error(f"Error updating test status in DynamoDB: {str(e)}")
