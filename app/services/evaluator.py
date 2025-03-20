@@ -444,13 +444,13 @@ class EvaluatorService:
             test_data = self.active_tests[test_id]
 
             # Convert the test case dictionary to a TestCase object
-            from ..models.test_cases import TestCase
+            from app.models.test_cases import TestCase
 
             if isinstance(test_data.get("test_case"), dict):
                 test_case = TestCase(**test_data["test_case"])
             else:
                 # Fallback to a default test case
-                from ..models.test_cases import TestCase, TestCaseConfig
+                from app.models.test_cases import TestCase, TestCaseConfig
 
                 test_case = TestCase(
                     id=uuid.UUID(test_id),
@@ -498,7 +498,7 @@ class EvaluatorService:
             execution_time = end_time - start_time
 
             # Convert conversation turns to standard objects for OpenAI evaluation
-            from ..models.reports import ConversationTurn
+            from app.models.reports import ConversationTurn
 
             conversation_turns = []
 
@@ -548,6 +548,7 @@ class EvaluatorService:
                     question=question_text,
                     conversation=[turn.dict() for turn in conversation_turns],
                     knowledge_base=self.knowledge_base,
+                    test_case=test_data.get("test_case"),
                 )
                 logger.info(f"Evaluation metrics: {metrics.dict()}")
             except Exception as eval_error:
@@ -893,59 +894,84 @@ class EvaluatorService:
         question: str,
         conversation: List[Dict[str, str]],
         knowledge_base: Dict[str, Any],
+        test_case: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Create an evaluation prompt based on the conversation and knowledge base."""
         conversation_text = ""
+        nl = "\n"  # necessary because you shouldn't have \ in f-strings
         for turn in conversation:
             speaker = turn["speaker"]
             text = turn["text"]
-            conversation_text += f"{speaker}: {text}\n\n"
+            conversation_text += f"{speaker}: {text}{nl}{nl}"
 
-        # Extract relevant information from knowledge base
-        relevant_answer = ""
+        # Check if there's a specific FAQ question and answer to evaluate against
+        faq_question = None
+        expected_answer = None
+
+        if test_case and "config" in test_case:
+            config = test_case.get("config", {})
+            faq_question = config.get("faq_question")
+            expected_answer = config.get("expected_answer")
+
+        # Build the accuracy evaluation section based on whether we have a specific FAQ
+        accuracy_section = ""
+        if faq_question and expected_answer:
+            accuracy_section = f"""
+            1. Accuracy (0-1 scale): 
+            - Specifically evaluate the agent's response to: "{faq_question}"
+            - The expected answer is: "{expected_answer}"
+            - Did the agent provide correct information based on this expected answer?
+            - Did they address the customer's question completely?
+            - Did they avoid providing incorrect information?
+            """
+        else:
+            accuracy_section = """
+            1. Accuracy (0-1 scale): 
+            - Did the agent provide correct information based on the knowledge base?
+            - Did they address the customer's question completely?
+            - Did they avoid providing incorrect information?
+            """
+
         return f"""
-        Please evaluate this customer service conversation between an AI agent and a customer.
-        
-        Original customer question: "{question}"
-        
-        Conversation transcript:
-        {conversation_text}
-        
-        Relevant information from knowledge base:
-        {relevant_answer if relevant_answer else "Not specified"}
-        
-        Evaluate the conversation on the following metrics:
-        
-        1. Accuracy (0-1 scale): 
-           - Did the agent provide correct information based on the knowledge base?
-           - Did they address the customer's question completely?
-           - Did they avoid providing incorrect information?
-        
-        2. Empathy (0-1 scale):
-           - Did the agent acknowledge the customer's feelings and situation?
-           - Did they use appropriate tone and language for the customer's behavior?
-           - Did they show understanding and patience?
-        
-        3. Response time:
-           - Estimate the average response time in seconds (based on conversation flow)
-        
-        Provide your evaluation in JSON format with ratings and brief explanations:
-        
-        {{
-            "accuracy": 0.0-1.0,
-            "accuracy_explanation": "brief explanation",
-            "empathy": 0.0-1.0,
-            "empathy_explanation": "brief explanation",
-            "response_time": seconds,
-            "overall_feedback": "brief summary feedback"
-        }}
-        """
+            Please evaluate this customer service conversation between an AI agent and a customer.
+            
+            Original customer question: "{question}"
+            
+            Conversation transcript:
+            {conversation_text}
+            
+            {f'Knowledge base information: {nl} {json.dumps(knowledge_base, indent=2)}' if not (faq_question and expected_answer) else ''}
+            
+            Evaluate the conversation on the following metrics:
+            
+            {accuracy_section}
+            
+            2. Empathy (0-1 scale):
+            - Did the agent acknowledge the customer's feelings and situation?
+            - Did they use appropriate tone and language for the customer's behavior?
+            - Did they show understanding and patience?
+            
+            3. Response time:
+            - Estimate the average response time in seconds (based on conversation flow)
+            
+            Provide your evaluation in JSON format with ratings and brief explanations:
+            
+            {{
+                "accuracy": 0.0-1.0,
+                "accuracy_explanation": "brief explanation",
+                "empathy": 0.0-1.0,
+                "empathy_explanation": "brief explanation",
+                "response_time": seconds,
+                "overall_feedback": "brief summary feedback"
+            }}
+            """
 
     async def evaluate_conversation(
         self,
         question: str,
         conversation: List[Dict[str, str]],
         knowledge_base: Dict[str, Any],
+        test_case: Optional[Dict[str, Any]] = None,
     ) -> EvaluationMetrics:
         """
         Evaluate a conversation using OpenAI.
@@ -954,12 +980,15 @@ class EvaluatorService:
             question: The original question asked
             conversation: List of conversation turns with speaker and text
             knowledge_base: The knowledge base for reference
+            test_case: Optional test case data that may contain faq_question and expected_answer
 
         Returns:
             EvaluationMetrics with accuracy and empathy scores
         """
         # Construct the prompt for evaluation
-        prompt = self._create_evaluation_prompt(question, conversation, knowledge_base)
+        prompt = self._create_evaluation_prompt(
+            question, conversation, knowledge_base, test_case
+        )
 
         response = requests.post(
             self.api_url,

@@ -563,6 +563,8 @@ async function createNewTest() {
     const questionInputs = document.querySelectorAll('.question-input');
     const questions = Array.from(questionInputs).map(input => input.value); // Just get the question text values
     
+    const faqQuestion = document.getElementById('faqQuestion')?.value?.trim();
+    const expectedAnswer = document.getElementById('expectedAnswer')?.value?.trim();
     // Construct test case object
     const testCase = {
         name: testName,
@@ -575,6 +577,15 @@ async function createNewTest() {
             max_turns: 4
         }
     };
+
+    // Add FAQ question and expected answer if both are provided
+    if (faqQuestion && expectedAnswer) {
+        testCase.config.faq_question = faqQuestion;
+        testCase.config.expected_answer = expectedAnswer;
+        console.log("Added FAQ question evaluation data to test");
+    } else if (faqQuestion || expectedAnswer) {
+        console.warn("Both FAQ question and expected answer are required to use this feature. Ignoring incomplete data.");
+    }
     
     try {
         // Submit to API

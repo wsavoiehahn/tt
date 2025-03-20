@@ -21,6 +21,8 @@ class TestCaseConfig(BaseModel):
     questions: List[str] = ["How can I find my member ID?"]
     special_instructions: Optional[str] = None
     max_turns: int = 4  # Default max conversation turns after main question
+    faq_question: Optional[str] = ""  # Specific FAQ question to evaluate against
+    expected_answer: Optional[str] = ""  # Expected answer for the FAQ question
 
 
 class TestCase(BaseModel):

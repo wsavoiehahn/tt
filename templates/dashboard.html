@@ -200,6 +200,22 @@
                             <textarea class="form-control" id="specialInstructions" rows="2" 
                                       placeholder="E.g., 'Test language switching' or 'Test urgent line transfer'"></textarea>
                         </div>
+
+
+                       <hr>
+                        <h6>FAQ Accuracy Evaluation (Optional)</h6>
+                        <p class="text-muted small">If you provide both a question and expected answer, the evaluation will focus on this specific FAQ question rather than the entire knowledge base.</p>
+                        <div class="mb-3">
+                            <label for="faqQuestion" class="form-label">FAQ Question</label>
+                            <textarea class="form-control" id="faqQuestion" rows="2" 
+                                      placeholder="Enter the specific FAQ question to test"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="expectedAnswer" class="form-label">Expected Answer</label>
+                            <textarea class="form-control" id="expectedAnswer" rows="3" 
+                                      placeholder="Enter the expected answer to the FAQ question"></textarea>
+                        </div>
+
                     </form>
                 </div>
                 <div class="modal-footer">

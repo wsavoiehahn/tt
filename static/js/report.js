@@ -79,20 +79,22 @@ function showError(message) {
 
 function populateReportDetails(report) {
     // Set the title
-    document.getElementById('reportTitle').textContent = `Test Case Report: ${report.test_case_name || 'Unknown Test'}`;
+    const reportTitleEl = document.getElementById('reportTitle');
+    if (reportTitleEl) {
+        reportTitleEl.textContent = `Test Case Report: ${report.test_case_name || 'Unknown Test'}`;
+    }
     
     // Set persona and behavior badges
     const personaBadge = document.getElementById('personaBadge');
     const behaviorBadge = document.getElementById('behaviorBadge');
-    personaBadge.textContent = `Persona: ${report.persona_name || 'Unknown'}`;
-    behaviorBadge.textContent = `Behavior: ${report.behavior_name || 'Unknown'}`;
+    if (personaBadge) personaBadge.textContent = `Persona: ${report.persona_name || 'Unknown'}`;
+    if (behaviorBadge) behaviorBadge.textContent = `Behavior: ${report.behavior_name || 'Unknown'}`;
     
     // Extract and display the test question, if available
     let mainQuestion = "No question specified";
     if (report.questions_evaluated && report.questions_evaluated.length > 0) {
         mainQuestion = report.questions_evaluated[0].question || "No question specified";
     } else if (report.test_case && report.test_case.config && report.test_case.config.questions) {
-        // Try to get from test case config
         const questions = report.test_case.config.questions;
         if (questions.length > 0) {
             if (typeof questions[0] === 'string') {
@@ -113,49 +115,97 @@ function populateReportDetails(report) {
         
         // Insert after report metadata
         const reportMetadata = document.getElementById('reportMetadata');
-        reportMetadata.parentNode.insertBefore(questionElement, reportMetadata.nextSibling);
+        if (reportMetadata && reportMetadata.parentNode) {
+            reportMetadata.parentNode.insertBefore(questionElement, reportMetadata.nextSibling);
+        }
     }
+    
+    if (questionElement) {
+        questionElement.textContent = mainQuestion;
+    }
+    
     // Set overall metrics
     const metrics = report.overall_metrics || {};
-    document.getElementById('overallAccuracy').textContent = `${Math.round((metrics.accuracy || 0) * 100)}%`;
-    document.getElementById('overallEmpathy').textContent = `${Math.round((metrics.empathy || 0) * 100)}%`;
-    document.getElementById('avgResponseTime').textContent = `${(metrics.response_time || 0).toFixed(2)}s`;
-    document.getElementById('executionTime').textContent = `${(report.execution_time || 0).toFixed(2)}s`;
+    
+    const accuracyEl = document.getElementById('overallAccuracy');
+    const empathyEl = document.getElementById('overallEmpathy');
+    const responseTimeEl = document.getElementById('avgResponseTime');
+    const executionTimeEl = document.getElementById('executionTime');
+    
+    if (accuracyEl) accuracyEl.textContent = `${Math.round((metrics.accuracy || 0) * 100)}%`;
+    if (empathyEl) empathyEl.textContent = `${Math.round((metrics.empathy || 0) * 100)}%`;
+    if (responseTimeEl) responseTimeEl.textContent = `${(metrics.response_time || 0).toFixed(2)}s`;
+    if (executionTimeEl) executionTimeEl.textContent = `${(report.execution_time || 0).toFixed(2)}s`;
 
     // Special instructions handling
-    if (report.special_instructions) {
-        document.getElementById('specialInstructions').textContent = report.special_instructions;
-        document.getElementById('specialInstructionsCard').style.display = 'block';
-    } else {
-        document.getElementById('specialInstructionsCard').style.display = 'none';
+    const specialInstructionsCard = document.getElementById('specialInstructionsCard');
+    const specialInstructionsEl = document.getElementById('specialInstructions');
+    
+    if (specialInstructionsCard && specialInstructionsEl) {
+        if (report.special_instructions) {
+            specialInstructionsEl.textContent = report.special_instructions;
+            specialInstructionsCard.style.display = 'block';
+        } else {
+            specialInstructionsCard.style.display = 'none';
+        }
+    }
+    
+    // FAQ evaluation handling
+    const faqEvaluationCard = document.getElementById('faqEvaluationCard');
+    const faqQuestionEl = document.getElementById('faqQuestion');
+    const expectedAnswerEl = document.getElementById('expectedAnswer');
+    
+    if (faqEvaluationCard && faqQuestionEl && expectedAnswerEl) {
+        const config = report.config || (report.test_case ? report.test_case.config : null) || {};
+        const faqQuestion = config.faq_question || null;
+        const expectedAnswer = config.expected_answer || null;
+        
+        if (faqQuestion && expectedAnswer) {
+            faqQuestionEl.textContent = faqQuestion;
+            expectedAnswerEl.textContent = expectedAnswer;
+            faqEvaluationCard.style.display = 'block';
+        } else {
+            faqEvaluationCard.style.display = 'none';
+        }
     }
 
     // Full recording handling
-    if (report.full_recording_url) {
-        document.getElementById('fullRecordingCard').style.display = 'block';
-        (async () => {
-            try {
-                const presignedUrl = await fetchPresignedUrl(report.full_recording_url);
-                if (presignedUrl) {
+    const fullRecordingCard = document.getElementById('fullRecordingCard');
+    if (fullRecordingCard) {
+        if (report.full_recording_url) {
+            fullRecordingCard.style.display = 'block';
+            (async () => {
+                try {
                     const audioEl = document.getElementById('fullRecording');
-                    audioEl.src = presignedUrl;
-                    document.getElementById('fullRecordingLoading').style.display = 'none';
-                } else {
-                    document.getElementById('fullRecordingLoading').innerHTML = 
-                        '<div class="audio-error">Audio unavailable</div>';
+                    const loadingEl = document.getElementById('fullRecordingLoading');
+                    
+                    if (audioEl && loadingEl) {
+                        const presignedUrl = await fetchPresignedUrl(report.full_recording_url);
+                        if (presignedUrl) {
+                            audioEl.src = presignedUrl;
+                            loadingEl.style.display = 'none';
+                        } else {
+                            loadingEl.innerHTML = '<div class="audio-error">Audio unavailable</div>';
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading full recording:', error);
+                    const loadingEl = document.getElementById('fullRecordingLoading');
+                    if (loadingEl) {
+                        loadingEl.innerHTML = '<div class="audio-error">Error loading audio</div>';
+                    }
                 }
-            } catch (error) {
-                console.error('Error loading full recording:', error);
-                document.getElementById('fullRecordingLoading').innerHTML = 
-                    '<div class="audio-error">Error loading audio</div>';
-            }
-        })();
-    } else {
-        document.getElementById('fullRecordingCard').style.display = 'none';
+            })();
+        } else {
+            fullRecordingCard.style.display = 'none';
+        }
     }
 
     // Populate questions and their conversations
-    populateQuestions(report.questions_evaluated);
+    const questionsContainer = document.getElementById('questionsContainer');
+    if (questionsContainer && report.questions_evaluated) {
+        populateQuestions(report.questions_evaluated);
+    }
 }
 
 // Populate each evaluated question and its conversation
