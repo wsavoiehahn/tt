@@ -107,6 +107,12 @@ function updateMetricsDisplay(metrics) {
     document.getElementById('overallEmpathy').textContent = `${Math.round(metrics.empathy * 100)}%`;
     document.getElementById('avgResponseTime').textContent = `${metrics.responseTime.toFixed(1)}s`;
     document.getElementById('successRate').textContent = `${Math.round(metrics.successRate * 100)}%`;
+    
+    // Update trends (these could be calculated from historical data in a real application)
+    document.getElementById('accuracyTrend').textContent = '+0.0%';
+    document.getElementById('empathyTrend').textContent = '+0.0%';
+    document.getElementById('responseTrend').textContent = '+0.0s';
+    document.getElementById('successTrend').textContent = '+0.0%';
 }
 
 // Calculate aggregated metrics from all reports
@@ -130,41 +136,42 @@ function calculateAggregatedMetrics(reports) {
         return metrics;
     }
     
+    console.log("Calculating metrics from", reports.length, "reports");
+    
     // Process each report
     reports.forEach(report => {
         // Get actual report data, either from data property or directly
         const reportData = report.data || report;
         
         // Extract metrics
-        const overallMetrics = reportData.overall_metrics || {};
-        
+        const reportMetrics = reportData.metrics || reportData.overall_metrics || {};        
         // Extract persona and behavior
         const personaName = 
             reportData.persona_name || 
-            reportData.test_case?.config?.persona_name || 
-            reportData.config?.persona_name || 
+            (reportData.test_case && reportData.test_case.config ? reportData.test_case.config.persona_name : null) || 
+            (reportData.config ? reportData.config.persona_name : null) || 
             'Unknown';
         
         const behaviorName = 
             reportData.behavior_name || 
-            reportData.test_case?.config?.behavior_name || 
-            reportData.config?.behavior_name || 
+            (reportData.test_case && reportData.test_case.config ? reportData.test_case.config.behavior_name : null) || 
+            (reportData.config ? reportData.config.behavior_name : null) || 
             'Unknown';
         
         // Only include reports with valid metrics
-        if (overallMetrics && typeof overallMetrics.accuracy === 'number') {
+        if (reportMetrics && typeof reportMetrics.accuracy === 'number') {
             // Count total reports
             metrics.overallMetrics.totalReports++;
             
             // Check if successful (no error message)
-            const isSuccessful = overallMetrics.successful !== false;
+            const isSuccessful = reportMetrics.successful !== false && !reportMetrics.error_message;
             if (isSuccessful) {
                 metrics.overallMetrics.successfulReports++;
                 
                 // Add to overall totals
-                metrics.overallMetrics.accuracy += overallMetrics.accuracy || 0;
-                metrics.overallMetrics.empathy += overallMetrics.empathy || 0;
-                metrics.overallMetrics.responseTime += overallMetrics.response_time || 0;
+                metrics.overallMetrics.accuracy += reportMetrics.accuracy || 0;
+                metrics.overallMetrics.empathy += reportMetrics.empathy || 0;
+                metrics.overallMetrics.responseTime += reportMetrics.response_time || 0;
                 
                 // Initialize persona metrics if not exists
                 if (!metrics.byPersona[personaName]) {
@@ -176,8 +183,8 @@ function calculateAggregatedMetrics(reports) {
                 }
                 
                 // Add to persona metrics
-                metrics.byPersona[personaName].accuracy += overallMetrics.accuracy || 0;
-                metrics.byPersona[personaName].empathy += overallMetrics.empathy || 0;
+                metrics.byPersona[personaName].accuracy += reportMetrics.accuracy || 0;
+                metrics.byPersona[personaName].empathy += reportMetrics.empathy || 0;
                 metrics.byPersona[personaName].count++;
                 
                 // Initialize behavior metrics if not exists
@@ -190,10 +197,12 @@ function calculateAggregatedMetrics(reports) {
                 }
                 
                 // Add to behavior metrics
-                metrics.byBehavior[behaviorName].accuracy += overallMetrics.accuracy || 0;
-                metrics.byBehavior[behaviorName].empathy += overallMetrics.empathy || 0;
+                metrics.byBehavior[behaviorName].accuracy += reportMetrics.accuracy || 0;
+                metrics.byBehavior[behaviorName].empathy += reportMetrics.empathy || 0;
                 metrics.byBehavior[behaviorName].count++;
             }
+        } else {
+            console.log("Skipping report with invalid metrics:", reportMetrics);
         }
     });
     
@@ -226,6 +235,7 @@ function calculateAggregatedMetrics(reports) {
         }
     }
     
+    console.log("Final calculated metrics:", metrics);
     return metrics;
 }
 
@@ -239,6 +249,7 @@ async function fetchReports() {
         
         if (response.ok) {
             reports = await response.json();
+            console.log("Fetched reports:", reports);
             
             // Filter out any reports that might be problematic
             reports = reports.filter(report => {
@@ -302,18 +313,18 @@ function displayReports(reports) {
             // Try multiple paths to find persona and behavior names
             const personaName = 
                 reportData.persona_name || 
-                reportData.test_case?.config?.persona_name || 
-                reportData.config?.persona_name || 
+                (reportData.test_case && reportData.test_case.config ? reportData.test_case.config.persona_name : null) || 
+                (reportData.config ? reportData.config.persona_name : null) || 
                 'Unknown';
             
             const behaviorName = 
                 reportData.behavior_name || 
-                reportData.test_case?.config?.behavior_name || 
-                reportData.config?.behavior_name || 
+                (reportData.test_case && reportData.test_case.config ? reportData.test_case.config.behavior_name : null) || 
+                (reportData.config ? reportData.config.behavior_name : null) || 
                 'Unknown';
 
-            // Extract metrics, with fallback to empty object
-            const metrics = reportData.overall_metrics || reportData.metrics || {};
+            // Check both metrics and overall_metrics properties
+            const metrics = reportData.metrics || reportData.overall_metrics || {};
 
             // Try to extract test case ID
             const testCaseId = 
@@ -346,7 +357,7 @@ function displayReports(reports) {
                     <div class="btn-group">
                         <a href="/dashboard/reports/${report.report_id}" class="btn btn-sm btn-outline-primary">View</a>
                         <button class="btn btn-sm btn-outline-secondary view-json" data-id="${report.report_id}">JSON</button>
-                        <button class="btn btn-sm btn-outline-danger delete-test" data-id="${testCaseId}" data-report="${report.report_id}">Delete</button>
+                        <button class="btn btn-sm btn-outline-danger delete-test" data-test-id="${testCaseId}" data-report-id="${report.report_id}">Delete</button>
                     </div>
                 </td>
             `;
@@ -358,12 +369,59 @@ function displayReports(reports) {
     document.getElementById('loadingReports').style.display = 'none';
 }
 
+// Update persona chart
+function updatePersonaChart(personaData) {
+    // Convert the persona data to arrays for the chart
+    const personaLabels = Object.keys(personaData);
+    const accuracyData = personaLabels.map(persona => personaData[persona].accuracy * 100);
+    const empathyData = personaLabels.map(persona => personaData[persona].empathy * 100);
+    
+    // Update chart data
+    personaChart.data.labels = personaLabels;
+    personaChart.data.datasets[0].data = accuracyData;
+    personaChart.data.datasets[1].data = empathyData;
+    
+    // Update the chart
+    personaChart.update();
+}
+
+// Update behavior chart
+function updateBehaviorChart(behaviorData) {
+    // Convert the behavior data to arrays for the chart
+    const behaviorLabels = Object.keys(behaviorData);
+    const accuracyData = behaviorLabels.map(behavior => behaviorData[behavior].accuracy * 100);
+    const empathyData = behaviorLabels.map(behavior => behaviorData[behavior].empathy * 100);
+    
+    // Update chart data
+    behaviorChart.data.labels = behaviorLabels;
+    behaviorChart.data.datasets[0].data = accuracyData;
+    behaviorChart.data.datasets[1].data = empathyData;
+    
+    // Update the chart
+    behaviorChart.update();
+}
+
 // Fetch personas and behaviors
 async function fetchPersonasAndBehaviors() {
     try {
         // Try to fetch from API first
         let personas = [];
         let behaviors = [];
+        
+        try {
+            const response = await fetch('/api/personas-behaviors');
+            if (response.ok) {
+                const data = await response.json();
+                if (data.personas && data.personas.length > 0) {
+                    personas = data.personas;
+                }
+                if (data.behaviors && data.behaviors.length > 0) {
+                    behaviors = data.behaviors;
+                }
+            }
+        } catch (apiError) {
+            console.warn('Could not fetch from API:', apiError);
+        }
         
         if (personas.length === 0 || behaviors.length === 0) {
             try {
@@ -389,7 +447,6 @@ async function fetchPersonasAndBehaviors() {
         
     } catch (error) {
         console.error('Error fetching personas and behaviors:', error);
-        populateSelects(personas, behaviors);
     }
 }
 
@@ -440,38 +497,6 @@ function populateSelects(personas, behaviors) {
         }
         behaviorSelect.appendChild(option);
     });
-}
-
-// Update persona chart
-function updatePersonaChart(personaData) {
-    // Convert the persona data to arrays for the chart
-    const personaLabels = Object.keys(personaData);
-    const accuracyData = personaLabels.map(persona => personaData[persona].accuracy * 100);
-    const empathyData = personaLabels.map(persona => personaData[persona].empathy * 100);
-    
-    // Update chart data
-    personaChart.data.labels = personaLabels;
-    personaChart.data.datasets[0].data = accuracyData;
-    personaChart.data.datasets[1].data = empathyData;
-    
-    // Update the chart
-    personaChart.update();
-}
-
-// Update behavior chart
-function updateBehaviorChart(behaviorData) {
-    // Convert the behavior data to arrays for the chart
-    const behaviorLabels = Object.keys(behaviorData);
-    const accuracyData = behaviorLabels.map(behavior => behaviorData[behavior].accuracy * 100);
-    const empathyData = behaviorLabels.map(behavior => behaviorData[behavior].empathy * 100);
-    
-    // Update chart data
-    behaviorChart.data.labels = behaviorLabels;
-    behaviorChart.data.datasets[0].data = accuracyData;
-    behaviorChart.data.datasets[1].data = empathyData;
-    
-    // Update the chart
-    behaviorChart.update();
 }
 
 // Form validation function
@@ -608,7 +633,7 @@ async function createNewTest() {
             showToast(`Error creating test: ${errorDetails}`, 'error');
         }
     } catch (error) {
-        console.error('Error creating test:', {...error})
+        console.error('Error creating test:', error);
         showToast('Error creating test. Please try again.', 'error');
     }
 }
@@ -780,10 +805,8 @@ function setupEventListeners() {
                 window.open(`/api/reports/${reportId}`, '_blank');
             }
         }
-    });
-    
-    // Add event delegation for delete test buttons
-    document.getElementById('reportsTableBody').addEventListener('click', function(e) {
+        
+        // Event delegation for delete test buttons
         if (e.target.classList.contains('delete-test') || e.target.parentElement.classList.contains('delete-test')) {
             const button = e.target.closest('.delete-test');
             if (button) {
