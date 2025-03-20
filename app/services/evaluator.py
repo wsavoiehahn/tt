@@ -168,6 +168,7 @@ class EvaluatorService:
 
         # initialize blank test report
         report = TestCaseReport(
+            id=uuid.uuid4(),
             test_case_id=test_case.id,
             test_case_name=test_case.name,
             persona_name=test_case.config.persona_name,
@@ -570,7 +571,17 @@ class EvaluatorService:
             # Create final report - simplified for single question
             from ..models.reports import TestCaseReport
 
+            existing_report_id = self.active_tests[test_id]["report_id"]
+            if existing_report_id:
+                report_id = existing_report_id
+                logger.info(f"Updating existing report: {report_id}")
+            else:
+                # Generate new report ID if none exists
+                report_id = str(uuid.uuid4())
+                logger.info(f"Creating new report: {report_id}")
+
             report = TestCaseReport(
+                id=uuid.UUID(report_id),  # Use existing ID if available
                 test_case_id=test_case.id,
                 test_case_name=test_case.name,
                 persona_name=test_case.config.persona_name,
