@@ -624,6 +624,7 @@ async function deleteTest(testId, reportId) {
         // Show a loading indicator
         showToast('Deleting test...', 'info');
         
+        console.log(`Making DELETE request to /api/tests/${testId}`);
         const response = await fetch(`/api/tests/${testId}`, {
             method: 'DELETE',
             headers: {
@@ -632,6 +633,7 @@ async function deleteTest(testId, reportId) {
         });
         
         const data = await response.json();
+        console.log('Delete response:', data);
         
         if (response.ok) {
             // Show success message
@@ -769,38 +771,6 @@ function setupEventListeners() {
     // Export Reports button
     document.getElementById('exportReportsBtn').addEventListener('click', exportReportsAsCSV);
     
-    // Add Question button
-    document.getElementById('addQuestionBtn').addEventListener('click', function() {
-        const questionsContainer = document.getElementById('questionsContainer');
-        const newQuestion = document.createElement('div');
-        newQuestion.className = 'question-item mb-2';
-        newQuestion.innerHTML = `
-            <div class="input-group">
-                <input type="text" class="form-control question-input" placeholder="Enter question" required>
-                <button type="button" class="btn btn-outline-secondary remove-question">
-                    <i class="bi bi-trash"></i> Remove
-                </button>
-            </div>
-        `;
-        questionsContainer.appendChild(newQuestion);
-    });
-    
-    // Add event delegation for remove question buttons
-    document.getElementById('questionsContainer').addEventListener('click', function(e) {
-        if (e.target.classList.contains('remove-question') || e.target.parentElement.classList.contains('remove-question')) {
-            const questionItem = e.target.closest('.question-item');
-            if (questionItem) {
-                // Always keep at least one question
-                const questionsCount = document.querySelectorAll('.question-item').length;
-                if (questionsCount > 1) {
-                    questionItem.parentElement.removeChild(questionItem);
-                } else {
-                    alert('You must have at least one question');
-                }
-            }
-        }
-    });
-    
     // Add event delegation for view JSON buttons
     document.getElementById('reportsTableBody').addEventListener('click', function(e) {
         if (e.target.classList.contains('view-json') || e.target.parentElement.classList.contains('view-json')) {
@@ -817,8 +787,11 @@ function setupEventListeners() {
         if (e.target.classList.contains('delete-test') || e.target.parentElement.classList.contains('delete-test')) {
             const button = e.target.closest('.delete-test');
             if (button) {
-                const testId = button.getAttribute('data-id');
-                const reportId = button.getAttribute('data-report');
+                const testId = button.getAttribute('data-test-id');
+                const reportId = button.getAttribute('data-report-id');
+                
+                // For debugging
+                console.log(`Delete button clicked with test_id: ${testId}, report_id: ${reportId}`);
                 
                 // Store the IDs for use by the confirmation button
                 document.getElementById('confirmDeleteBtn').setAttribute('data-test-id', testId);
@@ -835,6 +808,8 @@ function setupEventListeners() {
     document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
         const testId = this.getAttribute('data-test-id');
         const reportId = this.getAttribute('data-report-id');
+        
+        console.log(`Confirming deletion of test: ${testId}, report: ${reportId}`);
         
         // Close the modal
         const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteConfirmModal'));
