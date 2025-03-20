@@ -180,25 +180,29 @@
                             </div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Questions</label>
-                            <div id="questionsContainer">
-                                <div class="question-item mb-2">
-                                    <div class="input-group">
-                                        <input type="text" class="form-control question-input" placeholder="Enter question" required>
-                                        <button type="button" class="btn btn-outline-secondary remove-question">
-                                            <i class="bi bi-trash"></i>
-                                        </button>
-                                    </div>
+                            <label for="questionInput" class="form-label">Question</label>
+                            <div id="questionContainer">
+                                <input type="text" class="form-control" id="questionInput" placeholder="Enter question" required>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    <label for="specialInstructions" class="form-label">Special Instructions</label>
+                                    <textarea class="form-control" id="specialInstructions" rows="2" 
+                                            placeholder="E.g., 'Test language switching' or 'Test urgent line transfer'"></textarea>
                                 </div>
                             </div>
-                            <button type="button" id="addQuestionBtn" class="btn btn-sm btn-secondary mt-2">
-                                Add Question
-                            </button>
-                        </div>
-                        <div class="mb-3">
-                            <label for="specialInstructions" class="form-label">Special Instructions</label>
-                            <textarea class="form-control" id="specialInstructions" rows="2" 
-                                      placeholder="E.g., 'Test language switching' or 'Test urgent line transfer'"></textarea>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="maxTurns" class="form-label">Max Conversation Turns</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="maxTurns" min="1" max="20" value="4">
+                                        <span class="input-group-text">turns</span>
+                                    </div>
+                                    <small class="form-text text-muted">How many turns before saying goodbye</small>
+                                </div>
+                            </div>
                         </div>
 
 

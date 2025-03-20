@@ -110,10 +110,10 @@
                 </div>
             </div>
             
-            <!-- Questions Evaluations -->
-            <h2>Question Evaluations</h2>
-            <div id="questionsContainer">
-                <!-- Questions will be populated here via JavaScript -->
+            <!-- Single Conversation -->
+            <h2>Conversation</h2>
+            <div id="questionsContainer" class="mb-4">
+                <!-- Will be populated dynamically -->
             </div>
         </div>
     </div>
@@ -121,7 +121,7 @@
     <!-- Question template -->
     <template id="questionTemplate">
         <div class="card mb-4 question-card">
-            <div class="question-header">
+            <div class="question-header card-header">
                 <h3 class="question-text">Question</h3>
             </div>
             <div class="card-body">
@@ -130,9 +130,13 @@
                         <h5>Accuracy</h5>
                         <div class="d-flex align-items-center">
                             <span class="accuracy-value me-2">0%</span>
-                            <div class="flex-grow-1">
-                                <div class="accuracy-meter"></div>
-                                <div class="meter-marker" style="left: 0%;"></div>
+                            <div class="flex-grow-1 position-relative">
+                                <div class="accuracy-meter progress" style="height: 8px;">
+                                    <div class="progress-bar bg-primary" role="progressbar" style="width: 0%"></div>
+                                </div>
+                                <div class="meter-marker position-absolute top-0" style="left: 0%; transform: translateX(-50%);">
+                                    <div class="d-inline-block bg-primary" style="width: 2px; height: 16px;"></div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -140,9 +144,13 @@
                         <h5>Empathy</h5>
                         <div class="d-flex align-items-center">
                             <span class="empathy-value me-2">0%</span>
-                            <div class="flex-grow-1">
-                                <div class="empathy-meter"></div>
-                                <div class="meter-marker" style="left: 0%;"></div>
+                            <div class="flex-grow-1 position-relative">
+                                <div class="empathy-meter progress" style="height: 8px;">
+                                    <div class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                                </div>
+                                <div class="meter-marker position-absolute top-0" style="left: 0%; transform: translateX(-50%);">
+                                    <div class="d-inline-block bg-success" style="width: 2px; height: 16px;"></div>
+                                </div>
                             </div>
                         </div>
                     </div>

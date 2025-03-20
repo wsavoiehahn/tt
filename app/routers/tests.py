@@ -313,6 +313,9 @@ async def list_tests(limit: int = Query(50, ge=1, le=500)):
                                 "behavior": test_data.get("config", {}).get(
                                     "behavior_name", "Unknown"
                                 ),
+                                "question": test_data.get("config", {}).get(
+                                    "question", ""
+                                ),
                                 "created_at": test_data.get("created_at", ""),
                                 "status": (
                                     "completed"

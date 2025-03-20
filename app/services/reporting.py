@@ -182,54 +182,23 @@ class ReportingService:
         test_case_name = report_data.get("test_case_name", "Unknown Test Case")
         persona_name = report_data.get("persona_name", "Unknown Persona")
         behavior_name = report_data.get("behavior_name", "Unknown Behavior")
+        question = report_data.get("question", "Unknown Question")
 
-        overall_metrics = report_data.get("overall_metrics", {})
-        accuracy = overall_metrics.get("accuracy", 0) * 100
-        empathy = overall_metrics.get("empathy", 0) * 100
-        response_time = overall_metrics.get("response_time", 0)
+        metrics = report_data.get("metrics", {})
+        accuracy = metrics.get("accuracy", 0) * 100
+        empathy = metrics.get("empathy", 0) * 100
+        response_time = metrics.get("response_time", 0)
 
-        questions_html = ""
-        for q_eval in report_data.get("questions_evaluated", []):
-            question = q_eval.get("question", "Unknown Question")
-            metrics = q_eval.get("metrics", {})
-            q_accuracy = metrics.get("accuracy", 0) * 100
-            q_empathy = metrics.get("empathy", 0) * 100
-            q_response_time = metrics.get("response_time", 0)
+        conversation_html = ""
+        for turn in report_data.get("conversation", []):
+            speaker = turn.get("speaker", "Unknown")
+            text = turn.get("text", "")
+            speaker_class = "evaluator" if speaker == "evaluator" else "agent"
 
-            conversation_html = ""
-            for turn in q_eval.get("conversation", []):
-                speaker = turn.get("speaker", "Unknown")
-                text = turn.get("text", "")
-                speaker_class = "evaluator" if speaker == "evaluator" else "agent"
-
-                conversation_html += f"""
-                <div class="conversation-turn {speaker_class}">
-                    <div class="speaker">{speaker}</div>
-                    <div class="text">{text}</div>
-                </div>
-                """
-
-            questions_html += f"""
-            <div class="question-evaluation">
-                <h3>Question: {question}</h3>
-                <div class="metrics">
-                    <div class="metric">
-                        <span class="label">Accuracy:</span>
-                        <span class="value">{q_accuracy:.1f}%</span>
-                    </div>
-                    <div class="metric">
-                        <span class="label">Empathy:</span>
-                        <span class="value">{q_empathy:.1f}%</span>
-                    </div>
-                    <div class="metric">
-                        <span class="label">Response Time:</span>
-                        <span class="value">{q_response_time:.2f}s</span>
-                    </div>
-                </div>
-                <h4>Conversation:</h4>
-                <div class="conversation">
-                    {conversation_html}
-                </div>
+            conversation_html += f"""
+            <div class="conversation-turn {speaker_class}">
+                <div class="speaker">{speaker}</div>
+                <div class="text">{text}</div>
             </div>
             """
 
@@ -327,6 +296,7 @@ class ReportingService:
                 <h2>Overview</h2>
                 <p><strong>Persona:</strong> {persona_name}</p>
                 <p><strong>Behavior:</strong> {behavior_name}</p>
+                <p><strong>Question:</strong> {question}</p>
                 
                 <div class="overall-metrics">
                     <div class="metric-card">
@@ -344,8 +314,12 @@ class ReportingService:
                 </div>
             </div>
             
-            <h2>Question Evaluations</h2>
-            {questions_html}
+            <h2>Conversation</h2>
+            <div class="question-evaluation">
+                <div class="conversation">
+                    {conversation_html}
+                </div>
+            </div>
         </body>
         </html>
         """

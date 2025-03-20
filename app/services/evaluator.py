@@ -14,7 +14,6 @@ from app.models.test_cases import TestCase
 from app.models.reports import (
     ConversationTurn,
     EvaluationMetrics,
-    QuestionEvaluation,
     TestCaseReport,
 )
 from app.config import config
@@ -140,17 +139,18 @@ class EvaluatorService:
         logger.info(
             f"Test case details: {test_case.name}, persona: {test_case.config.persona_name}, behavior: {test_case.config.behavior_name}"
         )
-        logger.info(
-            f"Test case questions: {[q.text if isinstance(q, dict) else q for q in test_case.config.questions]}"
-        )
+
+        question_text = ""
+        if hasattr(test_case.config, "question"):
+            question_text = test_case.config.question
+
+        logger.info(f"Test case question: {question_text}")
 
         # Initialize test tracking in memory with more details
         self.active_tests[test_id] = {
             "test_case": test_case.dict(),
             "status": "starting",
             "start_time": start_time,
-            "current_question_index": 0,
-            "questions_evaluated": [],
             "execution_details": [],  # Add a list to track detailed execution steps
         }
 
@@ -163,14 +163,18 @@ class EvaluatorService:
             }
         )
 
-        # initialize blank test report:
+        # Initialize blank test report with the new structure
+        from app.models.reports import EvaluationMetrics
+
+        # initialize blank test report
         report = TestCaseReport(
             test_case_id=test_case.id,
             test_case_name=test_case.name,
             persona_name=test_case.config.persona_name,
             behavior_name=test_case.config.behavior_name,
-            questions_evaluated=[],
-            overall_metrics=EvaluationMetrics(
+            question=question_text,
+            conversation=[],  # Empty conversation list
+            metrics=EvaluationMetrics(  # Initialize metrics
                 accuracy=0.0,
                 empathy=0.0,
                 response_time=0.0,
@@ -437,7 +441,7 @@ class EvaluatorService:
                         config=TestCaseConfig(
                             persona_name="Unknown",
                             behavior_name="Unknown",
-                            questions=[],
+                            question="Unknown question",
                         ),
                     )
 
@@ -458,7 +462,7 @@ class EvaluatorService:
                     config=TestCaseConfig(
                         persona_name="Unknown",
                         behavior_name="Unknown",
-                        questions=[],
+                        question="Unknown question",
                     ),
                 )
 
@@ -536,11 +540,10 @@ class EvaluatorService:
 
             # Get question text
             question_text = "Default Question"
-            if test_case.config.questions and len(test_case.config.questions) > 0:
-                first_q = test_case.config.questions[0]
-                question_text = first_q
-            logger.info(f"Using question: {question_text}")
+            if hasattr(test_case.config, "question"):
+                question_text = test_case.config.question
 
+            logger.info(f"Using question: {question_text}")
             # Evaluate the conversation
 
             try:
@@ -550,7 +553,7 @@ class EvaluatorService:
                     knowledge_base=self.knowledge_base,
                     test_case=test_data.get("test_case"),
                 )
-                logger.info(f"Evaluation metrics: {metrics.dict()}")
+                logger.info(f"Evaluation metrics: {metrics}")
             except Exception as eval_error:
                 logger.error(f"Error evaluating conversation: {str(eval_error)}")
                 # Create default metrics with error
@@ -564,14 +567,7 @@ class EvaluatorService:
                     error_message=f"Evaluation error: {str(eval_error)}",
                 )
 
-            # Create question evaluation
-            from ..models.reports import QuestionEvaluation
-
-            question_eval = QuestionEvaluation(
-                question=question_text, conversation=conversation_turns, metrics=metrics
-            )
-
-            # Create final report
+            # Create final report - simplified for single question
             from ..models.reports import TestCaseReport
 
             report = TestCaseReport(
@@ -579,12 +575,12 @@ class EvaluatorService:
                 test_case_name=test_case.name,
                 persona_name=test_case.config.persona_name,
                 behavior_name=test_case.config.behavior_name,
-                questions_evaluated=[question_eval],
-                overall_metrics=metrics,
+                question=question_text,
+                conversation=conversation_turns,
+                metrics=metrics,
                 execution_time=execution_time,
                 special_instructions=test_case.config.special_instructions,
             )
-
             # Save report
             from ..services.s3_service import s3_service
 
@@ -627,8 +623,9 @@ class EvaluatorService:
                 test_case_name="Error Report",
                 persona_name="Unknown",
                 behavior_name="Unknown",
-                questions_evaluated=[],
-                overall_metrics=EvaluationMetrics(
+                question="Unknown question",
+                conversation=[],
+                metrics=EvaluationMetrics(
                     accuracy=0.0,
                     empathy=0.0,
                     response_time=0.0,
@@ -706,116 +703,6 @@ class EvaluatorService:
                 successful=False,
                 error_message=f"Error evaluating conversation: {str(e)}",
             )
-
-    def _calculate_overall_metrics(
-        self, questions_evaluated: List[QuestionEvaluation]
-    ) -> EvaluationMetrics:
-        """
-        Calculate overall metrics across all evaluated questions.
-
-        Args:
-            questions_evaluated: List of question evaluations
-
-        Returns:
-            Overall metrics
-        """
-        successful_evaluations = [
-            q.metrics for q in questions_evaluated if q.metrics.successful
-        ]
-
-        if not successful_evaluations:
-            return EvaluationMetrics(
-                accuracy=0.0,
-                empathy=0.0,
-                response_time=0.0,
-                successful=False,
-                error_message="No successful evaluations",
-            )
-
-        accuracy = sum(m.accuracy for m in successful_evaluations) / len(
-            successful_evaluations
-        )
-        empathy = sum(m.empathy for m in successful_evaluations) / len(
-            successful_evaluations
-        )
-        response_time = sum(m.response_time for m in successful_evaluations) / len(
-            successful_evaluations
-        )
-
-        return EvaluationMetrics(
-            accuracy=accuracy,
-            empathy=empathy,
-            response_time=response_time,
-            successful=True,
-        )
-
-    async def generate_empty_report(
-        self, test_id: str, error_message: str
-    ) -> Optional[TestCaseReport]:
-        """
-        Generate an empty report with error message when a test fails.
-
-        Args:
-            test_id: Test case ID
-            error_message: Error message to include in the report
-
-        Returns:
-            Empty TestCaseReport with error information
-        """
-        logger.info(
-            f"Generating empty report for test {test_id} with error: {error_message}"
-        )
-
-        if test_id not in self.active_tests:
-            logger.error(f"Test {test_id} not found in active tests")
-            return None
-
-        test_data = self.active_tests[test_id]
-        test_case = TestCase(**test_data["test_case"])
-        call_sid = test_data.get("call_sid", "unknown")
-
-        # Calculate execution time
-        execution_time = test_data.get("end_time", time.time()) - test_data.get(
-            "start_time", time.time()
-        )
-
-        # Create error metrics
-        error_metrics = EvaluationMetrics(
-            accuracy=0.0,
-            empathy=0.0,
-            response_time=0.0,
-            successful=False,
-            error_message=error_message,
-        )
-
-        # Create an empty question evaluation
-        empty_question_eval = QuestionEvaluation(
-            question="Test did not complete", conversation=[], metrics=error_metrics
-        )
-
-        # Create report
-        report = TestCaseReport(
-            test_case_id=test_case.id,
-            test_case_name=test_case.name,
-            persona_name=test_case.config.persona_name,
-            behavior_name=test_case.config.behavior_name,
-            questions_evaluated=[empty_question_eval],
-            overall_metrics=error_metrics,
-            execution_time=execution_time,
-            special_instructions=test_case.config.special_instructions,
-        )
-
-        # Save report
-        report_id = str(report.id)
-        s3_service.save_report(report.dict(), report_id)
-
-        # Update test status
-        self.active_tests[test_id]["status"] = "failed"
-        self.active_tests[test_id]["error"] = error_message
-
-        logger.info(f"Empty report generated for test {test_id}, report {report_id}")
-
-        return report
 
     def record_conversation_turn(
         self,

@@ -1,6 +1,6 @@
 # app/models/reports.py
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from uuid import UUID, uuid4
 from datetime import datetime
 
@@ -20,21 +20,16 @@ class EvaluationMetrics(BaseModel):
     error_message: Optional[str] = None
 
 
-class QuestionEvaluation(BaseModel):
-    question: str
-    conversation: List[ConversationTurn]
-    metrics: EvaluationMetrics
-    openai_feedback: Optional[Dict[str, Any]] = None  # Raw feedback from OpenAI
-
-
 class TestCaseReport(BaseModel):
     id: UUID = uuid4()
     test_case_id: UUID
     test_case_name: str
     persona_name: str
     behavior_name: str
-    questions_evaluated: List[QuestionEvaluation]
-    overall_metrics: EvaluationMetrics
+    question: str  # The single question being evaluated
+    conversation: List[ConversationTurn]  # Direct conversation list
+    metrics: EvaluationMetrics  # Direct metrics
+    openai_feedback: Optional[Dict[str, Any]] = None  # Raw feedback from OpenAI
     executed_at: datetime = datetime.now()
     execution_time: float  # Total execution time in seconds
     special_instructions: Optional[str] = None

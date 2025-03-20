@@ -501,22 +501,11 @@ function validateTestForm() {
         isValid = false;
     }
     
-    // Validate questions
-    const questionInputs = document.querySelectorAll('.question-input');
-    if (questionInputs.length === 0) {
-        // Add at least one question if none exists
-        document.getElementById('addQuestionBtn').click();
-        const newInput = document.querySelector('.question-input');
-        markInvalid(newInput, 'Please add at least one question');
+    // Validate question
+    const questionInput = document.getElementById('questionInput');
+    if (!questionInput.value.trim()) {
+        markInvalid(questionInput, 'Please enter a question');
         isValid = false;
-    } else {
-        // Check if all questions have text
-        questionInputs.forEach(input => {
-            if (!input.value.trim()) {
-                markInvalid(input, 'Please enter a question');
-                isValid = false;
-            }
-        });
     }
     
     return isValid;
@@ -558,13 +547,12 @@ async function createNewTest() {
     const personaName = document.getElementById('personaSelect').value;
     const behaviorName = document.getElementById('behaviorSelect').value;
     const specialInstructions = document.getElementById('specialInstructions').value;
-    
-    // Get questions
-    const questionInputs = document.querySelectorAll('.question-input');
-    const questions = Array.from(questionInputs).map(input => input.value); // Just get the question text values
-    
+    const question = document.getElementById('questionInput').value;
+
     const faqQuestion = document.getElementById('faqQuestion')?.value?.trim();
     const expectedAnswer = document.getElementById('expectedAnswer')?.value?.trim();
+    const maxTurns = parseInt(document.getElementById('maxTurns').value) || 4;
+
     // Construct test case object
     const testCase = {
         name: testName,
@@ -572,9 +560,9 @@ async function createNewTest() {
         config: {
             persona_name: personaName,
             behavior_name: behaviorName,
-            questions: questions, // Array of strings, not objects with 'text' property
+            question: question, 
             special_instructions: specialInstructions || null,
-            max_turns: 4
+            max_turns: maxTurns
         }
     };
 
@@ -586,7 +574,7 @@ async function createNewTest() {
     } else if (faqQuestion || expectedAnswer) {
         console.warn("Both FAQ question and expected answer are required to use this feature. Ignoring incomplete data.");
     }
-    
+
     try {
         // Submit to API
         const response = await fetch('/api/tests', {
@@ -754,10 +742,16 @@ function setupEventListeners() {
         // Reset form validation visuals
         resetFormValidation();
         
-        // Pre-populate the default question if the question field is empty
-        const questionInputs = document.querySelectorAll('.question-input');
-        if (questionInputs.length > 0 && !questionInputs[0].value) {
-            questionInputs[0].value = "How do I find my member ID?";
+        // Pre-populate the default question
+        const questionInput = document.getElementById('questionInput');
+        if (questionInput) {
+            questionInput.value = "How can I find my member ID?";
+        }
+        
+        // Set default max turns value
+        const maxTurnsInput = document.getElementById('maxTurns');
+        if (maxTurnsInput) {
+            maxTurnsInput.value = "4";
         }
         
         const modal = new bootstrap.Modal(document.getElementById('newTestModal'));

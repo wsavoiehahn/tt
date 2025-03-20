@@ -574,16 +574,62 @@ async def handle_media_stream(websocket: WebSocket):
                             last_assistant_item = None
                             response_start_timestamp_twilio = None
 
+                            # Check if this is a goodbye message
+                            is_goodbye_message = False
+
+                            # First check the text buffer for goodbye keywords
+                            goodbye_keywords = [
+                                "goodbye",
+                                "bye",
+                                "farewell",
+                                "take care",
+                                "have a good day",
+                            ]
+                            message_lower = (
+                                response_text_buffer.lower()
+                                if response_text_buffer
+                                else ""
+                            )
+
                             if any(
-                                "bye" in content.get("transcript", "")
-                                for item in response.get("response", {}).get(
-                                    "output", []
-                                )
-                                for content in item.get("content", [])
-                                if content.get("type") == "audio"
+                                keyword in message_lower for keyword in goodbye_keywords
                             ):
-                                time.sleep(1)
-                                logger.info(f"ending call: {call_sid}")
+                                is_goodbye_message = True
+                                logger.info("Detected goodbye in text content")
+
+                            # Also check audio transcript metadata if available
+                            if not is_goodbye_message:
+                                if any(
+                                    any(
+                                        keyword in content.get("transcript", "").lower()
+                                        for keyword in goodbye_keywords
+                                    )
+                                    for item in response.get("response", {}).get(
+                                        "output", []
+                                    )
+                                    for content in item.get("content", [])
+                                    if content.get("type") == "audio"
+                                ):
+                                    is_goodbye_message = True
+                                    logger.info("Detected goodbye in audio transcript")
+
+                            if is_goodbye_message:
+                                # Add a longer delay to ensure the entire goodbye message is played
+                                # The delay is proportional to the message length
+                                message_length = (
+                                    len(message_lower) if message_lower else 100
+                                )
+                                # Calculate delay: ~100 characters per 3 seconds of speech is a rough estimate
+                                delay_seconds = max(3, min(10, message_length / 30))
+
+                                logger.info(
+                                    f"Detected goodbye message, waiting {delay_seconds} seconds before ending call"
+                                )
+
+                                # Wait for the message to finish playing before ending the call
+                                await asyncio.sleep(delay_seconds)
+
+                                logger.info(f"Ending call after goodbye: {call_sid}")
                                 call = client.calls(call_sid).update(status="completed")
                                 await websocket.close()
 
@@ -846,7 +892,7 @@ def _create_system_prompt(test_id) -> str:
     test_case = evaluator_service.active_tests[test_id]["test_case"]
     persona_name = test_case["config"]["persona_name"]
     behavior_name = test_case["config"]["behavior_name"]
-    question = test_case["config"]["questions"][0]  # assume only 1 question
+    question = test_case["config"]["question"]
 
     persona_traits = ", ".join(config.get_persona_traits(persona_name))
     behavior_chars = ", ".join(config.get_behavior_characteristics(behavior_name))
