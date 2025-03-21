@@ -10,6 +10,7 @@ import io
 import wave
 import audioop
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,8 +18,10 @@ class S3Service:
     """Service for interacting with AWS S3 for storage."""
 
     def __init__(self):
-        self.region_name = os.environ.get("AWS_DEFAULT_REGION")
-        self.bucket_name = os.environ.get("S3_BUCKET_NAME")
+        from app.config import app_config
+
+        self.region_name = app_config.AWS_DEFAULT_REGION
+        self.bucket_name = app_config.FULL_S3_BUCKET_NAME
         self.s3_client = boto3.client("s3", region_name=self.region_name)
 
     def save_audio(
@@ -82,47 +85,6 @@ class S3Service:
             import traceback
 
             logger.error(traceback.format_exc())
-            return ""
-
-    def save_recording(self, recording_url: str, test_id: str, call_sid: str) -> str:
-        """
-        Save a Twilio recording to S3.
-
-        Args:
-            recording_url: URL of the recording to download
-            test_id: Test case ID
-            call_sid: Call SID
-
-        Returns:
-            S3 URL for the saved recording
-        """
-        import requests
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        key = f"tests/{test_id}/calls/{call_sid}/recordings/{timestamp}.mp3"
-
-        try:
-            # Download the recording
-            auth = (
-                os.environ.get("TWILIO_ACCOUNT_SID"),
-                os.environ.get("TWILIO_AUTH_TOKEN"),
-            )
-            response = requests.get(recording_url, auth=auth)
-
-            if response.status_code == 200:
-                self.s3_client.put_object(
-                    Bucket=self.bucket_name,
-                    Key=key,
-                    Body=response.content,
-                    ContentType="audio/mp3",
-                )
-
-                return f"s3://{self.bucket_name}/{key}"
-            else:
-                logger.error(f"Failed to download recording: {response.status_code}")
-                return ""
-        except (ClientError, requests.RequestException) as e:
-            logger.error(f"Error saving recording to S3: {str(e)}")
             return ""
 
     def save_transcription(

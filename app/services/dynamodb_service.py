@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 class DynamoDBService:
     """Service for managing test data in DynamoDB."""
 
-    def __init__(self, table_name="ai-call-center-evaluator-dev-tests"):
+    from app.config import app_config
+
+    def __init__(self, table_name=app_config.FULL_S3_BUCKET_NAME):
         self.table_name = table_name
         self.dynamodb = boto3.resource("dynamodb")
         self.table = self.dynamodb.Table(table_name)

@@ -5,7 +5,7 @@ import requests
 from typing import Dict, Any, Optional, List
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
-
+from app.config import app_config
 
 import time
 
@@ -16,11 +16,11 @@ class TwilioService:
     """Service for interacting with Twilio's API for call handling."""
 
     def __init__(self):
-        self.account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-        self.auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+        self.account_sid = app_config.TWILIO_ACCOUNT_SID
+        self.auth_token = app_config.TWILIO_AUTH_TOKEN
         self.client = Client(self.account_sid, self.auth_token)
-        self.ai_service_number = os.environ.get("TARGET_PHONE_NUMBER")
-        self.callback_url = os.environ.get("TWILIO_CALLBACK_URL")
+        self.ai_service_number = app_config.TARGET_PHONE_NUMBER
+        self.callback_url = f"https://{app_config.URL}"
         # Track active calls
         self.active_calls = {}
 
@@ -141,7 +141,7 @@ class TwilioService:
             status_callback_url = (
                 f"{self.callback_url}/webhooks/call-status?test_id={test_id}"
             )
-            websocket_url = os.environ.get("WEBSOCKET_ENDPOINT")
+            websocket_url = f"wss://{app_config.URL}"
             logger.info(f"Status callback URL: {status_callback_url}")
 
             # Critical part: Ensure test_id is properly passed to the WebSocket

@@ -16,7 +16,6 @@ from app.models.reports import (
     EvaluationMetrics,
     TestCaseReport,
 )
-from app.config import config
 from app.services.s3_service import s3_service
 
 logger = logging.getLogger(__name__)
@@ -26,10 +25,12 @@ class EvaluatorService:
     """Service for executing test cases and evaluating AI call center responses."""
 
     def __init__(self):
+        from app.config import app_config
+
         self.active_tests = {}
-        self.knowledge_base = config.load_knowledge_base()
-        self.personas_data = config.load_personas()
-        self.api_key = os.environ.get("OPENAI_API_KEY")
+        self.knowledge_base = app_config.KNOWLEDGE_BASE
+        self.personas_data = app_config.PERSONAS
+        self.api_key = app_config.OPENAI_API_KEY
         self.realtime_url = "wss://api.openai.com/v1/realtime"
         self.api_url = "https://api.openai.com/v1/chat/completions"
         self.realtime_model = "gpt-4o-realtime-preview-2024-12-17"

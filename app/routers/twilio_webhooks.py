@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 
 active_websockets = {}
 
-callback_url = os.environ.get("TWILIO_CALLBACK_URL")
-
 
 @router.post("/call-status")
 async def call_status(request: Request):

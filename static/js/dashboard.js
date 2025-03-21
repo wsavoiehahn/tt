@@ -423,23 +423,6 @@ async function fetchPersonasAndBehaviors() {
             console.warn('Could not fetch from API:', apiError);
         }
         
-        if (personas.length === 0 || behaviors.length === 0) {
-            try {
-                const fallbackResponse = await fetch('/api/personas-behaviors');
-                if (fallbackResponse.ok) {
-                    const fallbackData = await fallbackResponse.json();
-                    if (fallbackData.personas && fallbackData.personas.length > 0) {
-                        personas = fallbackData.personas;
-                    }
-                    if (fallbackData.behaviors && fallbackData.behaviors.length > 0) {
-                        behaviors = fallbackData.behaviors;
-                    }
-                }
-            } catch (fallbackError) {
-                console.warn('Could not fetch from fallback endpoint:', fallbackError);
-            }
-        }
-        
         console.log('Final personas to be used:', personas);
         console.log('Final behaviors to be used:', behaviors);
         

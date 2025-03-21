@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routers import tests, reports, twilio_webhooks, websocket_handlers
-from .config import config
+from .config import config, app_config
 from .services.evaluator import evaluator_service
 from .services.s3_service import s3_service
 from .services.reporting import reporting_service
@@ -42,6 +42,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -49,7 +50,6 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Type", "X-Requested-With", "Authorization"],
 )
 
 # Setup static files and templates directories
@@ -86,17 +86,8 @@ else:
 async def startup_event():
     """Initialize services on application startup."""
     try:
-        is_local_mode = os.environ.get("LOCAL_MODE", "false").lower() == "true"
-        if is_local_mode:
+        if app_config.is_local_mode():
             logger.info("Starting in LOCAL MODE")
-        # Load configuration
-        secrets = config.load_secrets()
-        logger.info("Configuration loaded successfully")
-
-        # Load knowledge base and personas data
-        evaluator_service.knowledge_base = config.load_knowledge_base()
-        evaluator_service.personas_data = config.load_personas()
-        logger.info("Knowledge base and personas data loaded successfully")
 
         s3_service.ensure_bucket_exists()
         logger.info(f"Storage initialized")
@@ -257,18 +248,14 @@ async def system_info():
         # Collect system info
         info = {
             "version": "1.0.0",
-            "environment": os.environ.get("ENV", "development"),
-            "aws_region": os.environ.get("AWS_DEFAULT_REGION"),
-            "s3_bucket": s3_service.bucket_name,
-            "twilio_configured": bool(os.environ.get("TWILIO_ACCOUNT_SID")),
-            "openai_configured": bool(os.environ.get("OPENAI_API_KEY")),
-            "knowledge_base_items": len(
-                evaluator_service.knowledge_base.get("faqs", [])
-            ),
-            "personas_count": len(evaluator_service.personas_data.get("personas", [])),
-            "behaviors_count": len(
-                evaluator_service.personas_data.get("behaviors", [])
-            ),
+            "environment": app_config.ENV_TIER,
+            "aws_region": app_config.AWS_DEFAULT_REGION,
+            "s3_bucket": app_config.FULL_S3_BUCKET_NAME,
+            "twilio_configured": bool(app_config.TWILIO_ACCOUNT_SID),
+            "openai_configured": bool(app_config.OPENAI_API_KEY),
+            "knowledge_base_items": len(app_config.KNOWLEDGE_BASE.get("faqs"), []),
+            "personas_count": len(app_config.PERSONAS.get("personas"), []),
+            "behaviors_count": len(app_config.PERSONAS.get("behaviors"), []),
             "active_tests": len(evaluator_service.active_tests),
         }
         return info
@@ -279,30 +266,16 @@ async def system_info():
         )
 
 
+@app.get("/api/personas-behaviors")
+async def get_personas_and_behaviors():
+    """Get system information and configuration."""
+    return app_config.PERSONAS
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "ok", "version": "1.0.0"}
-
-
-@app.get("/api/personas-behaviors")
-async def get_personas_behaviors():
-    """Get personas and behaviors data."""
-    try:
-        # Use the config service to load the data
-        from .config import config
-
-        # Load personas data
-        personas_data = config.load_personas()
-
-        # Return the full data structure
-        return personas_data
-    except Exception as e:
-        logger.error(f"Error loading personas and behaviors: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Error loading personas and behaviors: {str(e)}"},
-        )
 
 
 @app.exception_handler(Exception)
