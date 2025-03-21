@@ -5,8 +5,67 @@ import wave
 import logging
 import tempfile
 from typing import Optional, Tuple
+import audioop
+from pydub import AudioSegment
+from pydub.silence import detect_leading_silence
 
 logger = logging.getLogger(__name__)
+
+
+def trim_silence(
+    audio_data: bytes,
+    silence_thresh: float = -40.0,
+    chunk_size: int = 10,
+    format: str = "g711_ulaw",
+    sample_width: int = 2,
+    frame_rate: int = 8000,
+    channels: int = 1,
+) -> bytes:
+    """
+    Trim leading and trailing silence from audio data.
+
+    Args:
+        audio_data (bytes): Raw audio data (assumed to be g711_ulaw encoded).
+        silence_thresh (float): Silence threshold in dBFS (default -40 dBFS).
+        chunk_size (int): Chunk size in milliseconds for silence detection.
+        format (str): Audio format (default 'g711_ulaw').
+        sample_width (int): Sample width in bytes after PCM conversion.
+        frame_rate (int): Frame rate of audio (default 8000 for g711).
+        channels (int): Number of audio channels (default 1).
+
+    Returns:
+        bytes: Trimmed audio data in original g711_ulaw format.
+    """
+    try:
+        # Convert g711_ulaw bytes to PCM
+        pcm_audio = audioop.ulaw2lin(audio_data, sample_width)
+
+        # Load PCM data into AudioSegment
+        audio_segment = AudioSegment(
+            data=pcm_audio,
+            sample_width=sample_width,
+            frame_rate=frame_rate,
+            channels=channels,
+        )
+
+        # Trim silence
+        trimmed_audio_segment = audio_segment.strip_silence(
+            silence_thresh=silence_thresh,
+            silence_len=chunk_size,
+            padding=chunk_size // 1.1,
+        )
+
+        # Export trimmed audio to PCM bytes
+        trimmed_pcm = trimmed_audio_segment.raw_data
+
+        # Convert trimmed PCM audio back to g711_ulaw
+        trimmed_ulaw = audioop.lin2ulaw(trimmed_pcm, sample_width)
+
+        return trimmed_ulaw
+
+    except Exception as e:
+        logger.error(f"Error in trim_silence: {e}")
+        return audio_data  # Fallback to original if any error occurs
 
 
 def create_silent_wav(duration_seconds: float = 1.0, sample_rate: int = 44100) -> bytes:
@@ -79,7 +138,7 @@ def convert_mp3_to_wav(mp3_data: bytes) -> bytes:
         os.remove(wav_path)
 
         return wav_data
-    except ImportError:
+    except ImportError as e:
         logger.error(
             "pydub is required for MP3 to WAV conversion. Install with 'pip install pydub'"
         )
@@ -87,72 +146,6 @@ def convert_mp3_to_wav(mp3_data: bytes) -> bytes:
     except Exception as e:
         logger.error(f"Error converting MP3 to WAV: {str(e)}")
         return create_silent_wav()  # Fallback to silent WAV
-
-
-def trim_silence(
-    wav_data: bytes, threshold: float = 0.01, min_silence_ms: int = 500
-) -> bytes:
-    """
-    Trim silence from the beginning and end of a WAV file.
-
-    Args:
-        wav_data: WAV audio data as bytes
-        threshold: Amplitude threshold for silence detection (0.0 to 1.0)
-        min_silence_ms: Minimum silence duration to trim (milliseconds)
-
-    Returns:
-        Trimmed WAV audio data as bytes
-    """
-    try:
-        # This requires pydub, which requires ffmpeg
-        from pydub import AudioSegment
-        from pydub.silence import detect_leading_silence, detect_trailing_silence
-
-        # Create temporary files for processing
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
-            wav_file.write(wav_data)
-            wav_path = wav_file.name
-
-        # Load audio
-        sound = AudioSegment.from_wav(wav_path)
-
-        # Convert threshold to dBFS
-        threshold_dbfs = sound.dBFS * threshold
-
-        # Detect silence
-        start_trim = detect_leading_silence(
-            sound, silence_threshold=threshold_dbfs, chunk_size=min_silence_ms
-        )
-        end_trim = detect_trailing_silence(
-            sound, silence_threshold=threshold_dbfs, chunk_size=min_silence_ms
-        )
-
-        # Trim the audio
-        trimmed_sound = (
-            sound[start_trim:-end_trim] if end_trim > 0 else sound[start_trim:]
-        )
-
-        # Export to a new file
-        trimmed_path = wav_path.replace(".wav", "_trimmed.wav")
-        trimmed_sound.export(trimmed_path, format="wav")
-
-        # Read the trimmed WAV file
-        with open(trimmed_path, "rb") as trimmed_file:
-            trimmed_data = trimmed_file.read()
-
-        # Clean up temporary files
-        os.remove(wav_path)
-        os.remove(trimmed_path)
-
-        return trimmed_data
-    except ImportError:
-        logger.error(
-            "pydub is required for silence trimming. Install with 'pip install pydub'"
-        )
-        return wav_data  # Return original data
-    except Exception as e:
-        logger.error(f"Error trimming silence: {str(e)}")
-        return wav_data  # Return original data
 
 
 def get_audio_duration(wav_data: bytes) -> float:

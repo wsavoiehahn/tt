@@ -13,6 +13,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from twilio.rest import Client
 from app.config import config
 from app.services.dynamodb_service import dynamodb_service
+from app.utils.audio import trim_silence
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +23,7 @@ client = Client(
     username=os.environ.get("TWILIO_ACCOUNT_SID"),
     password=os.environ.get("TWILIO_AUTH_TOKEN"),
 )
-VOICE = "coral"  # OpenAI voice model
+VOICE = "alloy"  # OpenAI voice model
 LOG_EVENT_TYPES = [
     "response.content.done",
     "rate_limits.updated",
@@ -59,6 +60,7 @@ async def save_audio_chunk(audio_data, test_id, call_sid, speaker, turn_number=N
                 turn_number = 0
 
         # Save the audio to S3
+        audio_data = trim_silence(audio_data)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         s3_url = s3_service.save_audio(
             audio_data=audio_data,
@@ -747,22 +749,64 @@ async def handle_media_stream(websocket: WebSocket):
             # Save the full conversation recording if available
             if is_recording_full_conversation and len(full_conversation_audio) > 1000:
                 try:
+                    import audioop
+                    import wave
+                    import io
                     from app.services.s3_service import s3_service
 
+                    full_audio = trim_silence(full_conversation_audio)
+                    # Convert audio to proper WAV format
+                    try:
+                        # Convert from ulaw to linear PCM
+                        pcm_audio = audioop.ulaw2lin(
+                            bytes(full_audio), 2
+                        )  # 2 bytes = 16 bits PCM
+
+                        # Create WAV file in memory
+                        wav_buffer = io.BytesIO()
+                        with wave.open(wav_buffer, "wb") as wav_file:
+                            wav_file.setnchannels(1)  # Mono channel
+                            wav_file.setsampwidth(2)  # 16 bits PCM = 2 bytes
+                            wav_file.setframerate(8000)  # 8kHz sampling rate for G711
+                            # Write audio frames
+                            wav_file.writeframes(pcm_audio)
+
+                        # Get the WAV file content
+                        wav_data = wav_buffer.getvalue()
+                        logger.info(
+                            f"Successfully converted full conversation audio to proper WAV format, size: {len(wav_data)} bytes"
+                        )
+                    except Exception as conv_error:
+                        logger.error(
+                            f"Error converting audio format: {str(conv_error)}"
+                        )
+                        # Fallback to raw audio data if conversion fails
+                        wav_data = bytes(full_audio)
+                        logger.warning(
+                            f"Using raw audio data instead, size: {len(wav_data)} bytes"
+                        )
+
+                    # Save to S3
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     key = f"tests/{test_id}/calls/{call_sid}/full_conversation_{timestamp}.wav"
                     s3_service.s3_client.put_object(
                         Bucket=s3_service.bucket_name,
                         Key=key,
-                        Body=bytes(full_conversation_audio),
+                        Body=wav_data,
                         ContentType="audio/wav",
                     )
+
+                    # Store the S3 URL in the test data
                     full_recording_url = f"s3://{s3_service.bucket_name}/{key}"
                     logger.debug(
                         f"Full conversation recording saved to: {full_recording_url}"
                     )
+
                 except Exception as e:
                     logger.error(f"Error saving full conversation recording: {str(e)}")
+                    import traceback
+
+                    logger.error(traceback.format_exc())
 
             # Process the call to generate evaluation report
             try:
