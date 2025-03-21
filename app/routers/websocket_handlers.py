@@ -1,17 +1,15 @@
 # app/websocket_handlers.py
 from datetime import datetime
-import os
 import json
 import base64
 import asyncio
 import logging
-import time
 import websockets
 import websockets.connection
 from websockets.protocol import State
 from fastapi import WebSocket, WebSocketDisconnect
 from twilio.rest import Client
-from app.config import config, app_config
+from app.config import app_config
 from app.services.dynamodb_service import dynamodb_service
 from app.utils.audio import trim_silence
 

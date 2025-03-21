@@ -1,23 +1,20 @@
 # app/main.py
 import logging
-import os
 from pathlib import Path
-from typing import Dict, Any
 
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import tests, reports, twilio_webhooks, websocket_handlers
-from .config import config, app_config
-from .services.evaluator import evaluator_service
-from .services.s3_service import s3_service
-from .services.reporting import reporting_service
+from app.routers import tests, reports, twilio_webhooks, websocket_handlers
+from app.config import app_config
+from app.services.evaluator import evaluator_service
+from app.services.s3_service import s3_service
 
 import app.routers.websocket_handlers as websocket_handlers
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 
 # Configure logging
 logging.basicConfig(
