@@ -50,6 +50,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Type", "X-Requested-With", "Authorization"],
 )
 
 # Setup static files and templates directories
@@ -253,9 +254,9 @@ async def system_info():
             "s3_bucket": app_config.FULL_S3_BUCKET_NAME,
             "twilio_configured": bool(app_config.TWILIO_ACCOUNT_SID),
             "openai_configured": bool(app_config.OPENAI_API_KEY),
-            "knowledge_base_items": len(app_config.KNOWLEDGE_BASE.get("faqs"), []),
-            "personas_count": len(app_config.PERSONAS.get("personas"), []),
-            "behaviors_count": len(app_config.PERSONAS.get("behaviors"), []),
+            "knowledge_base_items": len(app_config.KNOWLEDGE_BASE.get("faqs", [])),
+            "personas_count": len(app_config.PERSONAS.get("personas", [])),
+            "behaviors_count": len(app_config.PERSONAS.get("behaviors", [])),
             "active_tests": len(evaluator_service.active_tests),
         }
         return info
