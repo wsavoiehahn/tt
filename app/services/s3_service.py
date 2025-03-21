@@ -22,7 +22,11 @@ class S3Service:
 
         self.region_name = app_config.AWS_DEFAULT_REGION
         self.bucket_name = app_config.FULL_S3_BUCKET_NAME
-        self.s3_client = boto3.client("s3", region_name=self.region_name)
+        self.s3_client = boto3.client(
+            "s3",
+            region_name=self.region_name,
+            endpoint_url=f"https://s3.{self.region_name}.amazonaws.com",
+        )
 
     def save_audio(
         self,
@@ -68,12 +72,12 @@ class S3Service:
                 # Write audio frames
                 wav_file.writeframes(pcm_audio)
 
-            wav_buffer = wav_buffer.getvalue()
+            wav_data = wav_buffer.getvalue()
 
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
                 Key=key,
-                Body=wav_buffer,
+                Body=wav_data,
                 ContentType="audio/wav",
             )
             # Return S3 URL
@@ -82,9 +86,6 @@ class S3Service:
             return s3_url
         except Exception as e:
             logger.error(f"Error saving audio to S3: {str(e)}")
-            import traceback
-
-            logger.error(traceback.format_exc())
             return ""
 
     def save_transcription(
