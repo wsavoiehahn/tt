@@ -116,7 +116,7 @@ async def save_transcription(text, test_id, call_sid, speaker, turn_number=None)
             logger.error(f"Failed to save transcription to S3")
             return None
 
-        logger.info(f"Saved transcription to S3: {s3_url}")
+        logger.debug(f"Saved transcription to S3: {s3_url}")
 
         # Also save to conversation directly
         from app.services.evaluator import evaluator_service
