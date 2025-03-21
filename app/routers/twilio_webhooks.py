@@ -8,7 +8,6 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-import os
 
 from app.services.twilio_service import twilio_service
 from app.services.evaluator import evaluator_service

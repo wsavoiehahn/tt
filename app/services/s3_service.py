@@ -5,7 +5,6 @@ import boto3
 from botocore.exceptions import ClientError
 from typing import Dict, Any, List, Union, BinaryIO
 from datetime import datetime
-import os
 import io
 import wave
 import audioop

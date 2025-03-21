@@ -1,13 +1,7 @@
 # app/utils/audio.py
-import io
-import os
-import wave
 import logging
-import tempfile
-from typing import Optional, Tuple
 import audioop
 from pydub import AudioSegment
-from pydub.silence import detect_leading_silence
 
 logger = logging.getLogger(__name__)
 
