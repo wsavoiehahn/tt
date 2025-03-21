@@ -2,6 +2,9 @@
 FROM python:3.9.13-slim
 WORKDIR /app
 
+# Install ffmpeg for pydub compatibility
+RUN apt-get update && apt-get install -y ffmpeg
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

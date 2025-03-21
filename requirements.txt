@@ -1,7 +1,7 @@
 fastapi==0.115.0
 pydantic==2.9.2
 uvicorn==0.30.6
-
+pydub
 mangum
 python-multipart
 jinja2
@@ -16,5 +16,4 @@ websockets
 
 python-dotenv
 aiohttp
-pydub
 debugpy
