@@ -60,7 +60,7 @@ async def save_audio_chunk(audio_data, test_id, call_sid, speaker, turn_number=N
                 turn_number = 0
 
         # Save the audio to S3
-        # audio_data = trim_silence(audio_data)
+        audio_data = trim_silence(audio_data)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         s3_url = s3_service.save_audio(
             audio_data=audio_data,
@@ -754,8 +754,8 @@ async def handle_media_stream(websocket: WebSocket):
                     import io
                     from app.services.s3_service import s3_service
 
-                    # full_audio = trim_silence(full_conversation_audio)
-                    full_audio = full_conversation_audio
+                    full_audio = trim_silence(full_conversation_audio)
+                    # full_audio = full_conversation_audio
                     # Convert audio to proper WAV format
                     try:
                         # Convert from ulaw to linear PCM
