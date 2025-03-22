@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 import logging
+from itertools import islice
 
 # Configure logging
 logging.basicConfig(
@@ -100,20 +101,27 @@ class AppConfig(BaseModel):
             AWS_REGION = os.environ["AWS_DEFAULT_REGION"]
 
             ssm = boto3.client("ssm", region_name=AWS_REGION)
-            param_paths = [f"{CLIENT_ID}/{ENV_TIER}/{var}" for var in required_vars]
+            param_paths = [f"/{CLIENT_ID}/{ENV_TIER}/{var}" for var in required_vars]
+
+            def chunked(iterable, size):
+                it = iter(iterable)
+                while chunk := list(islice(it, size)):
+                    yield chunk
+
+            aws_params = {}
 
             try:
-                response = ssm.get_parameters(Names=param_paths, WithDecryption=True)
-                aws_params = {
-                    param["Name"]: param["Value"] for param in response["Parameters"]
-                }
+                for chunk in chunked(param_paths, 10):
+                    response = ssm.get_parameters(Names=chunk, WithDecryption=True)
+                    for param in response["Parameters"]:
+                        aws_params[param["Name"]] = param["Value"]
 
                 missing = set(param_paths) - set(aws_params.keys())
                 if missing:
                     raise ValueError(f"Missing AWS parameters: {missing}")
 
                 config = {
-                    var: aws_params[f"{CLIENT_ID}/{ENV_TIER}/{var}"]
+                    var: aws_params[f"/{CLIENT_ID}/{ENV_TIER}/{var}"]
                     for var in required_vars
                 }
             except ClientError as e:
@@ -131,8 +139,6 @@ class AppConfig(BaseModel):
         )
 
         instance = cls(**config)
-        # Load dictionaries after instance creation
-
         instance.KNOWLEDGE_BASE = instance.load_json_file(instance.KNOWLEDGE_BASE_PATH)
         instance.PERSONAS = instance.load_json_file(instance.PERSONAS_PATH)
 
