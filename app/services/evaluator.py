@@ -7,7 +7,6 @@ import uuid
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import requests
-import os
 
 from app.models.personas import Persona, Behavior
 from app.models.test_cases import TestCase

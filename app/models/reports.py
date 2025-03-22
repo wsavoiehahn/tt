@@ -1,6 +1,6 @@
 # app/models/reports.py
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 from uuid import UUID, uuid4
 from datetime import datetime
 
