@@ -36,30 +36,32 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Once report data is loaded, load audio for all conversation turns
         loadAudioForConversation();
         
-        // Set up export buttons - using more robust selector approach
-        setupExportButtons(reportId);
+        // Set up export button
+        setupExportButton(reportId);
     
     } catch (error) {
-    console.error('Error in DOMContentLoaded:', error);
-    showError(`Failed to load report: ${error.message}`);
+        console.error('Error in DOMContentLoaded:', error);
+        showError(`Failed to load report: ${error.message}`);
     }
 });
-// Function to set up export buttons with proper error handling
-function setupExportButtons(reportId) {
-    console.log('Setting up export buttons');
+
+// Function to set up export button with proper error handling
+function setupExportButton(reportId) {
+    console.log('Setting up export button');
     
-    // Get the dropdown menu items using more general selectors
-    const exportHtmlBtn = document.querySelector('.dropdown-menu a[id="exportReportBtn"]');
-    if (exportHtmlBtn) {
-    console.log('Found HTML export button, attaching event listener');
-    exportHtmlBtn.addEventListener('click', function(e) {
+    const exportButton = document.getElementById('exportReportBtn');
+    if (!exportButton) {
+        console.warn('Export button not found in DOM');
+        return;
+    }
+    
+    console.log('Found export button, attaching event listener');
+    exportButton.addEventListener('click', function(e) {
         e.preventDefault();
         window.open(`/api/reports/${reportId}/html`, '_blank');
     });
-    } else {
-    console.warn('HTML export button not found in DOM');
-    }
 }
+
 // Extract report ID from URL
 function getReportIdFromUrl() {
   const pathParts = window.location.pathname.split('/');
@@ -248,6 +250,7 @@ function populateReportDetails(report) {
         displayConversation(report);
     }
 }
+
 // Display the conversation from the report
 function displayConversation(report) {
     const questionsContainer = document.getElementById('questionsContainer');
@@ -302,280 +305,133 @@ function displayConversation(report) {
         
     // Add to the page
     questionsContainer.appendChild(questionTemplate);
-  }
+}
   
 // Populate conversation turns
 function populateConversation(conversation, container) {
     container.innerHTML = '';
     
     if (!conversation || conversation.length === 0) {
-    container.innerHTML = '<div class="alert alert-warning">No conversation data available</div>';
-    return;
+        container.innerHTML = '<div class="alert alert-warning">No conversation data available</div>';
+        return;
     }
     
     conversation.forEach((turn, index) => {
-    const turnTemplate = document.getElementById('turnTemplate').content.cloneNode(true);
-    const turnElement = turnTemplate.querySelector('.conversation-turn');
-    turnElement.querySelector('.speaker-label').textContent = capitalizeFirstLetter(turn.speaker);
-    turnElement.querySelector('.turn-text').textContent = turn.text;
-    turnElement.classList.add(`turn-${turn.speaker}`);
+        const turnTemplate = document.getElementById('turnTemplate').content.cloneNode(true);
+        const turnElement = turnTemplate.querySelector('.conversation-turn');
+        turnElement.querySelector('.speaker-label').textContent = capitalizeFirstLetter(turn.speaker);
+        turnElement.querySelector('.turn-text').textContent = turn.text;
+        turnElement.classList.add(`turn-${turn.speaker}`);
 
-    const audioPlayer = turnElement.querySelector('.audio-player');
-    if (turn.audio_url) {
-        // Mark the audio element with its S3 URL for later processing
-        audioPlayer.setAttribute('data-s3-url', turn.audio_url);
-        const loadingIndicator = document.createElement('div');
-        loadingIndicator.className = 'audio-loading';
-        loadingIndicator.innerHTML = '<div class="spinner"></div><span>Loading audio...</span>';
-        turnElement.appendChild(loadingIndicator);
+        const audioPlayer = turnElement.querySelector('.audio-player');
+        if (turn.audio_url) {
+            // Mark the audio element with its S3 URL for later processing
+            audioPlayer.setAttribute('data-s3-url', turn.audio_url);
+            const loadingIndicator = document.createElement('div');
+            loadingIndicator.className = 'audio-loading';
+            loadingIndicator.innerHTML = '<div class="spinner"></div><span>Loading audio...</span>';
+            turnElement.appendChild(loadingIndicator);
 
-        (async () => {
-        try {
-            let audioUrl = turn.audio_url;
-            if (audioUrl.startsWith('s3://')) {
-            console.log(`Getting presigned URL for: ${audioUrl}`);
-            const presignedUrl = await fetchPresignedUrl(audioUrl);
-            console.log(`Got presigned URL: ${presignedUrl ? presignedUrl.substring(0, 100) + '...' : 'null'}`);
-            if (presignedUrl) {
-                audioPlayer.src = presignedUrl;
-                audioPlayer.style.display = 'block';
-                audioPlayer.addEventListener('error', (e) => {
-                console.error('Audio player error:', e);
-                loadingIndicator.innerHTML = `<div class="audio-error">Error: ${audioPlayer.error?.message || 'Could not play audio'}</div>`;
-                });
-                audioPlayer.addEventListener('loadeddata', () => {
-                console.log('Audio loaded successfully');
-                loadingIndicator.remove();
-                });
-            } else {
-                audioPlayer.style.display = 'none';
-                loadingIndicator.innerHTML = '<div class="audio-error">Could not retrieve audio URL</div>';
-            }
-            } else {
-            // For non-S3 URLs, load directly
-            audioPlayer.src = audioUrl;
-            audioPlayer.style.display = 'block';
-            audioPlayer.addEventListener('loadeddata', () => {
-                loadingIndicator.remove();
-            });
-            audioPlayer.addEventListener('error', () => {
-                loadingIndicator.innerHTML = '<div class="audio-error">Could not load audio</div>';
-            });
-            }
-        } catch (error) {
-            console.error('Error loading audio:', error);
-            loadingIndicator.innerHTML = `<div class="audio-error">Error: ${error.message}</div>`;
+            (async () => {
+                try {
+                    let audioUrl = turn.audio_url;
+                    if (audioUrl.startsWith('s3://')) {
+                        console.log(`Getting presigned URL for: ${audioUrl}`);
+                        const presignedUrl = await fetchPresignedUrl(audioUrl);
+                        console.log(`Got presigned URL: ${presignedUrl ? presignedUrl.substring(0, 100) + '...' : 'null'}`);
+                        if (presignedUrl) {
+                            audioPlayer.src = presignedUrl;
+                            audioPlayer.style.display = 'block';
+                            audioPlayer.addEventListener('error', (e) => {
+                                console.error('Audio player error:', e);
+                                loadingIndicator.innerHTML = `<div class="audio-error">Error: ${audioPlayer.error?.message || 'Could not play audio'}</div>`;
+                            });
+                            audioPlayer.addEventListener('loadeddata', () => {
+                                console.log('Audio loaded successfully');
+                                loadingIndicator.remove();
+                            });
+                        } else {
+                            audioPlayer.style.display = 'none';
+                            loadingIndicator.innerHTML = '<div class="audio-error">Could not retrieve audio URL</div>';
+                        }
+                    } else {
+                        // For non-S3 URLs, load directly
+                        audioPlayer.src = audioUrl;
+                        audioPlayer.style.display = 'block';
+                        audioPlayer.addEventListener('loadeddata', () => {
+                            loadingIndicator.remove();
+                        });
+                        audioPlayer.addEventListener('error', () => {
+                            loadingIndicator.innerHTML = '<div class="audio-error">Could not load audio</div>';
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error loading audio:', error);
+                    loadingIndicator.innerHTML = `<div class="audio-error">Error: ${error.message}</div>`;
+                    audioPlayer.style.display = 'none';
+                }
+            })();
+        } else {
             audioPlayer.style.display = 'none';
         }
-        })();
-    } else {
-        audioPlayer.style.display = 'none';
-    }
-    
-    container.appendChild(turnElement);
+        
+        container.appendChild(turnElement);
     });
 }
   
-  // Consolidated fetchPresignedUrl function
-  async function fetchPresignedUrl(s3Url) {
+// Fetch presigned URL for S3 audio files
+async function fetchPresignedUrl(s3Url) {
     try {
-      const encodedUrl = encodeURIComponent(s3Url);
-      const response = await fetch(`/api/reports/presigned-audio-url?s3_url=${encodedUrl}`);
-      if (!response.ok) {
-        throw new Error(`Failed to get presigned URL: ${response.statusText}`);
-      }
-      const data = await response.json();
-      return data.url;
+        const encodedUrl = encodeURIComponent(s3Url);
+        const response = await fetch(`/api/reports/presigned-audio-url?s3_url=${encodedUrl}`);
+        if (!response.ok) {
+            throw new Error(`Failed to get presigned URL: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return data.url;
     } catch (error) {
-      console.error('Error fetching presigned URL:', error);
-      return null;
+        console.error('Error fetching presigned URL:', error);
+        return null;
     }
-  }
+}
   
-  // Helper to capitalize the first letter of a string
-  function capitalizeFirstLetter(string) {
+// Helper to capitalize the first letter of a string
+function capitalizeFirstLetter(string) {
     if (!string) return '';
     return string.charAt(0).toUpperCase() + string.slice(1);
-  }
+}
   
-  // Load audio for all conversation turns marked with data-s3-url
-  async function loadAudioForConversation() {
+// Load audio for all conversation turns marked with data-s3-url
+async function loadAudioForConversation() {
     const audioElements = document.querySelectorAll('audio[data-s3-url]');
     if (audioElements.length === 0) {
-      console.log('No S3 audio URLs found in report');
-      return;
+        console.log('No S3 audio URLs found in report');
+        return;
     }
     console.log(`Found ${audioElements.length} audio elements with S3 URLs`);
     for (const audioEl of audioElements) {
-      const s3Url = audioEl.getAttribute('data-s3-url');
-      if (!s3Url) continue;
-      try {
-        const presignedUrl = await fetchPresignedUrl(s3Url);
-        if (presignedUrl) {
-          audioEl.src = presignedUrl;
-          audioEl.style.display = 'block';
+        const s3Url = audioEl.getAttribute('data-s3-url');
+        if (!s3Url) continue;
+        try {
+            const presignedUrl = await fetchPresignedUrl(s3Url);
+            if (presignedUrl) {
+                audioEl.src = presignedUrl;
+                audioEl.style.display = 'block';
+            }
+        } catch (error) {
+            console.error(`Error loading audio: ${error.message}`);
         }
-      } catch (error) {
-        console.error(`Error loading audio: ${error.message}`);
-      }
-    }
-  }
-  
-// Populate each evaluated question and its conversation
-function populateQuestions(questions) {
-    const questionsContainer = document.getElementById('questionsContainer');
-    questionsContainer.innerHTML = '';
-    
-    // Check if we're using the new format (direct conversation on report) or old format (questions_evaluated array)
-    if (window.currentReport && window.currentReport.conversation) {
-      const questionTemplate = document.getElementById('questionTemplate').content.cloneNode(true);
-      
-      // Get the main question
-      const questionText = window.currentReport.question || "Question";
-      questionTemplate.querySelector('.question-text').textContent = questionText;
-      
-      // Get metrics
-      const metrics = window.currentReport.metrics || {};
-      const accuracyPercent = Math.round((metrics.accuracy || 0) * 100);
-      const empathyPercent = Math.round((metrics.empathy || 0) * 100);
-      const responseTime = metrics.response_time || 0;
-      
-      questionTemplate.querySelector('.accuracy-value').textContent = `${accuracyPercent}%`;
-      questionTemplate.querySelector('.empathy-value').textContent = `${empathyPercent}%`;
-      questionTemplate.querySelector('.response-time').textContent = `${responseTime.toFixed(2)}s`;
-      questionTemplate.querySelector('.meter-marker').style.left = `${accuracyPercent}%`;
-      questionTemplate.querySelectorAll('.meter-marker')[1].style.left = `${empathyPercent}%`;
-      
-      // Populate conversation
-      populateConversation(window.currentReport.conversation, questionTemplate.querySelector('.conversation-container'));
-      questionsContainer.appendChild(questionTemplate);
     }
 }
-// Consolidated fetchPresignedUrl function (removes duplicate definitions)
-async function fetchPresignedUrl(s3Url) {
-  try {
-      const encodedUrl = encodeURIComponent(s3Url);
-      const response = await fetch(`/api/reports/presigned-audio-url?s3_url=${encodedUrl}`);
-      if (!response.ok) {
-          throw new Error(`Failed to get presigned URL: ${response.statusText}`);
-      }
-      const data = await response.json();
-      return data.url;
-  } catch (error) {
-      console.error('Error fetching presigned URL:', error);
-      return null;
-  }
-}
-
-// Populate conversation turns in each question
-function populateConversation(conversation, container) {
-  container.innerHTML = '';
-  console.log("Populating conversation:", conversation);
-  if (!conversation || conversation.length === 0) {
-      container.innerHTML = '<div class="alert alert-warning">No conversation data available</div>';
-      return;
-  }
-  conversation.forEach((turn, index) => {
-      console.log(`Turn ${index}:`, turn);
-      const turnTemplate = document.getElementById('turnTemplate').content.cloneNode(true);
-      const turnElement = turnTemplate.querySelector('.conversation-turn');
-      turnElement.querySelector('.speaker-label').textContent = capitalizeFirstLetter(turn.speaker);
-      turnElement.querySelector('.turn-text').textContent = turn.text;
-      turnElement.classList.add(`turn-${turn.speaker}`);
-
-      const audioPlayer = turnElement.querySelector('.audio-player');
-      if (turn.audio_url) {
-          // Mark the audio element with its S3 URL for later processing.
-          audioPlayer.setAttribute('data-s3-url', turn.audio_url);
-          const loadingIndicator = document.createElement('div');
-          loadingIndicator.className = 'audio-loading';
-          loadingIndicator.innerHTML = '<div class="spinner"></div><span>Loading audio...</span>';
-          turnElement.appendChild(loadingIndicator);
-
-          (async () => {
-              try {
-                  let audioUrl = turn.audio_url;
-                  if (audioUrl.startsWith('s3://')) {
-                      console.log(`Getting presigned URL for: ${audioUrl}`);
-                      const presignedUrl = await fetchPresignedUrl(audioUrl);
-                      console.log(`Got presigned URL: ${presignedUrl ? presignedUrl.substring(0, 100) + '...' : 'null'}`);
-                      if (presignedUrl) {
-                          audioPlayer.src = presignedUrl;
-                          audioPlayer.style.display = 'block';
-                          audioPlayer.addEventListener('error', (e) => {
-                              console.error('Audio player error:', e);
-                              loadingIndicator.innerHTML = `<div class="audio-error">Error: ${audioPlayer.error?.message || 'Could not play audio'}</div>`;
-                          });
-                          audioPlayer.addEventListener('loadeddata', () => {
-                              console.log('Audio loaded successfully');
-                              loadingIndicator.remove();
-                          });
-                      } else {
-                          audioPlayer.style.display = 'none';
-                          loadingIndicator.innerHTML = '<div class="audio-error">Could not retrieve audio URL</div>';
-                      }
-                  } else {
-                      // For non-S3 URLs, load directly.
-                      audioPlayer.src = audioUrl;
-                      audioPlayer.style.display = 'block';
-                      audioPlayer.addEventListener('loadeddata', () => {
-                          loadingIndicator.remove();
-                      });
-                      audioPlayer.addEventListener('error', () => {
-                          loadingIndicator.innerHTML = '<div class="audio-error">Could not load audio</div>';
-                      });
-                  }
-              } catch (error) {
-                  console.error('Error loading audio:', error);
-                  loadingIndicator.innerHTML = `<div class="audio-error">Error: ${error.message}</div>`;
-                  audioPlayer.style.display = 'none';
-              }
-          })();
-      } else {
-          console.log(`Turn ${index} has no audio URL`);
-          audioPlayer.style.display = 'none';
-      }
-      container.appendChild(turnElement);
-  });
-}
-
-// Helper to capitalize the first letter of a string
-function capitalizeFirstLetter(string) {
-  return string.charAt(0).toUpperCase() + string.slice(1);
-}
-
-// Load audio for all conversation turns marked with data-s3-url
-async function loadAudioForConversation() {
-  const audioElements = document.querySelectorAll('audio[data-s3-url]');
-  if (audioElements.length === 0) {
-      console.log('No S3 audio URLs found in report');
-      return;
-  }
-  console.log(`Found ${audioElements.length} audio elements with S3 URLs`);
-  for (const audioEl of audioElements) {
-      const s3Url = audioEl.getAttribute('data-s3-url');
-      if (!s3Url) continue;
-      try {
-          const presignedUrl = await fetchPresignedUrl(s3Url);
-          if (presignedUrl) {
-              audioEl.src = presignedUrl;
-              audioEl.style.display = 'block';
-          }
-      } catch (error) {
-          console.error(`Error loading audio: ${error.message}`);
-      }
-  }
-}
-
   
-  // Add toast notification for user feedback
-  function showToast(message, type = 'info') {
+// Add toast notification for user feedback
+function showToast(message, type = 'info') {
     // Check if toast container exists, if not create it
     let toastContainer = document.querySelector('.toast-container');
     if (!toastContainer) {
-      toastContainer = document.createElement('div');
-      toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
-      document.body.appendChild(toastContainer);
+        toastContainer = document.createElement('div');
+        toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+        document.body.appendChild(toastContainer);
     }
     
     // Create toast element
@@ -588,50 +444,20 @@ async function loadAudioForConversation() {
     toastEl.setAttribute('aria-atomic', 'true');
     
     toastEl.innerHTML = `
-      <div class="d-flex">
-        <div class="toast-body">
-          ${message}
+        <div class="d-flex">
+            <div class="toast-body">
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
         </div>
-        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-      </div>
     `;
     
     toastContainer.appendChild(toastEl);
     
     // Initialize and show the toast
     const toast = new bootstrap.Toast(toastEl, {
-      autohide: true,
-      delay: 5000
+        autohide: true,
+        delay: 5000
     });
     toast.show();
-  }
-  
-// Add dropdown menu for export options
-function updateExportButton() {
-    const exportButton = document.getElementById('exportReportBtn');
-    if (!exportButton) return;
-    
-    // Replace the single button with a dropdown
-    const exportDropdown = document.createElement('div');
-    exportDropdown.className = 'btn-group';
-    exportDropdown.innerHTML = `
-    <button type="button" class="btn btn-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-        <i class="bi bi-download"></i> Export Report
-    </button>
-    <ul class="dropdown-menu dropdown-menu-end">
-        <li><a class="dropdown-item" href="#" id="exportHtmlBtn">Export as HTML</a></li>
-        <li><a class="dropdown-item" href="#" id="exportWithAudioBtn">Export with Audio</a></li>
-    </ul>
-    `;
-    
-    exportButton.parentNode.replaceChild(exportDropdown, exportButton);
-    
-    // Add event listeners to the new buttons
-    document.getElementById('exportHtmlBtn').addEventListener('click', function(e) {
-    e.preventDefault();
-    const reportId = getReportIdFromUrl();
-    window.open(`/api/reports/${reportId}/html`, '_blank');
-    });
-    
 }
-
