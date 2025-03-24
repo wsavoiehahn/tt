@@ -633,7 +633,7 @@ async function exportReportWithAudio() {
     };
     
     // Request the export from server
-    const response = await fetch('/api/reports/export-with-audio', {
+    const response = await fetch('/api/reports/export-with-audio/', {
         method: 'POST',
         headers: {
         'Content-Type': 'application/json'

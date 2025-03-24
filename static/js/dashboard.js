@@ -244,7 +244,7 @@ async function fetchReports() {
     try {
         document.getElementById('loadingReports').style.display = 'block';
         
-        const response = await fetch('/api/reports');
+        const response = await fetch('/api/reports/');
         let reports = [];
         
         if (response.ok) {
@@ -585,7 +585,7 @@ async function createNewTest() {
 
     try {
         // Submit to API
-        const response = await fetch('/api/tests', {
+        const response = await fetch('/api/tests/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
