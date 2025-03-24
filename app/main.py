@@ -16,6 +16,7 @@ from app.services.s3_service import s3_service
 import app.routers.websocket_handlers as websocket_handlers
 from fastapi import WebSocket
 
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

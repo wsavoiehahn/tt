@@ -49,7 +49,7 @@ function setupExportButtons(reportId) {
     console.log('Setting up export buttons');
     
     // Get the dropdown menu items using more general selectors
-    const exportHtmlBtn = document.querySelector('.dropdown-menu a[id="exportHtmlBtn"]');
+    const exportHtmlBtn = document.querySelector('.dropdown-menu a[id="exportReportBtn"]');
     if (exportHtmlBtn) {
     console.log('Found HTML export button, attaching event listener');
     exportHtmlBtn.addEventListener('click', function(e) {
@@ -58,30 +58,6 @@ function setupExportButtons(reportId) {
     });
     } else {
     console.warn('HTML export button not found in DOM');
-    }
-    
-    const exportWithAudioBtn = document.querySelector('.dropdown-menu a[id="exportWithAudioBtn"]');
-    if (exportWithAudioBtn) {
-    console.log('Found audio export button, attaching event listener');
-    exportWithAudioBtn.addEventListener('click', function(e) {
-        e.preventDefault();
-        exportReportWithAudio();
-    });
-    } else {
-    console.warn('Audio export button not found in DOM');
-    
-    // Fallback - try to add listener to the main export button if the dropdown isn't there
-    const mainExportBtn = document.getElementById('exportReportBtn');
-    if (mainExportBtn) {
-        console.log('Found main export button, adding audio export capability');
-        // Replace single button with new functionality
-        mainExportBtn.addEventListener('click', function(e) {
-        e.preventDefault();
-        exportReportWithAudio();
-        });
-    } else {
-        console.warn('No export buttons found in the DOM');
-    }
     }
 }
 // Extract report ID from URL
@@ -591,84 +567,6 @@ async function loadAudioForConversation() {
   }
 }
 
-// Fixed exportReportWithAudio function
-async function exportReportWithAudio() {
-    try {
-    // Find the export button dropdown - this approach is more flexible
-    const exportBtn = document.querySelector('.btn-group .dropdown-toggle');
-    let originalBtnText = 'Export Report';
-    
-    // Store original text and update with spinner only if we found the button
-    if (exportBtn) {
-        originalBtnText = exportBtn.innerHTML;
-        exportBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Preparing export...';
-        exportBtn.disabled = true;
-    }
-    
-    // Get the report ID
-    const reportId = getReportIdFromUrl();
-    if (!reportId) {
-        throw new Error('Could not determine report ID');
-    }
-    
-    // Get all audio URLs from the conversation
-    const audioElements = document.querySelectorAll('audio[data-s3-url]');
-    if (audioElements.length === 0) {
-        showToast('No audio files found in this report', 'warning');
-        // Restore button state if we found the button
-        if (exportBtn) {
-        exportBtn.innerHTML = originalBtnText;
-        exportBtn.disabled = false;
-        }
-        return;
-    }
-    
-    // Show progress message
-    showToast(`Preparing export with ${audioElements.length} audio files...`, 'info');
-    
-    // Build a request object with report ID and S3 URLs
-    const exportRequest = {
-        reportId: reportId,
-        audioUrls: Array.from(audioElements).map(el => el.getAttribute('data-s3-url')).filter(Boolean)
-    };
-    
-    // Request the export from server
-    const response = await fetch('/api/reports/export-with-audio', {
-        method: 'POST',
-        headers: {
-        'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(exportRequest)
-    });
-    
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'Failed to create export');
-    }
-    
-    const data = await response.json();
-    
-    if (data.exportUrl) {
-        // Success - provide download link
-        showToast('Export completed successfully!', 'success');
-        
-        // Open the download in a new tab or directly download
-        window.open(data.exportUrl, '_blank');
-    } else {
-        throw new Error('No export URL returned');
-    }
-    } catch (error) {
-    console.error('Error exporting report with audio:', error);
-    showToast(`Export failed: ${error.message}`, 'error');
-    } finally {
-    // Restore button state - using the more flexible approach
-    const exportBtn = document.querySelector('.btn-group .dropdown-toggle');
-    if (exportBtn) {
-        exportBtn.innerHTML = '<i class="bi bi-download"></i> Export Report';
-        exportBtn.disabled = false;
-    }
-    }
-}
   
   // Add toast notification for user feedback
   function showToast(message, type = 'info') {
@@ -735,9 +633,5 @@ function updateExportButton() {
     window.open(`/api/reports/${reportId}/html`, '_blank');
     });
     
-    document.getElementById('exportWithAudioBtn').addEventListener('click', function(e) {
-    e.preventDefault();
-    exportReportWithAudio();
-    });
 }
 
