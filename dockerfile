@@ -14,5 +14,9 @@ EXPOSE 80
 # Expose a port for debugpy (commonly 5678)
 EXPOSE 5678
 
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 # Run Uvicorn with debugpy, waiting for the debugger to attach
-CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80"]
+# CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80"]
