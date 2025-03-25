@@ -11,6 +11,7 @@ services:
       - .:/app
     env_file:
       - ./.env
-    command: python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m uvicorn app.main:app --host 0.0.0.0 --port 80 --reload
-    # command: uvicorn app.main:app --host 0.0.0.0 --port 80 --reload
+    restart: unless-stopped
+    # command: python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m uvicorn app.main:app --host 0.0.0.0 --port 80 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 80 --reload
 
