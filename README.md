@@ -191,7 +191,7 @@ The system:
 | LOCAL_MODE | Whether to use local storage | .env file | Environment variable |
 | LOCAL_STORAGE_PATH | Path for local storage | .env file | Environment variable |
 
-> **Note:** For sensitive values like API keys, please contact the project administrator for the actual values.
+> **Note:** For sensitive values like API keys, please contact Vish or Will for the actual values.
 
 ### Knowledge Base and Personas
 
