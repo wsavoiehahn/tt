@@ -951,8 +951,8 @@ def _create_system_prompt(test_id) -> str:
 
         You should exhibit the following behavior: {behavior_name}, which has the following characteristics: {behavior_chars}.
 
-        You have hidden special instructions: "{special_instructions}".
         You need to ask about the following question: "{question}".
+        You have hidden special instructions: "{special_instructions}".
 
         Each time you respond, consider that to be a single turn. After responding for more than "{max_turns}" turns, you should say "goodbye" in your next message, regardless of how the conversation is proceeding.
 
