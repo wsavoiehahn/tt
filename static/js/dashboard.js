@@ -482,6 +482,12 @@ function populateSelects(personas, behaviors) {
     });
 }
 
+
+function validatePhoneNumber(phone) {
+    // Simple validation for international format
+    return phone === '' || /^\+[0-9]{10,15}$/.test(phone);
+}
+
 // Form validation function
 function validateTestForm() {
     let isValid = true;
@@ -495,6 +501,13 @@ function validateTestForm() {
         isValid = false;
     }
     
+    // Validate phone number format if provided
+    const phoneInput = document.getElementById('targetPhoneNumber');
+    if (phoneInput.value.trim() !== '' && !validatePhoneNumber(phoneInput.value.trim())) {
+        markInvalid(phoneInput, 'Please enter a valid phone number in international format (e.g., +12345678901)');
+        isValid = false;
+    }
+
     // Validate persona selection
     const personaSelect = document.getElementById('personaSelect');
     if (!personaSelect.value) {
@@ -556,6 +569,8 @@ async function createNewTest() {
     const behaviorName = document.getElementById('behaviorSelect').value;
     const specialInstructions = document.getElementById('specialInstructions').value;
     const question = document.getElementById('questionInput').value;
+    const targetPhoneNumber = document.getElementById('targetPhoneNumber').value.trim();
+
 
     const faqQuestion = document.getElementById('faqQuestion')?.value?.trim();
     const expectedAnswer = document.getElementById('expectedAnswer')?.value?.trim();
@@ -574,6 +589,9 @@ async function createNewTest() {
         }
     };
 
+    if (targetPhoneNumber) {
+        testCase.config.target_phone_number = targetPhoneNumber;
+    }
     // Add FAQ question and expected answer if both are provided
     if (faqQuestion && expectedAnswer) {
         testCase.config.faq_question = faqQuestion;

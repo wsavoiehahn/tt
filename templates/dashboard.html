@@ -188,6 +188,13 @@
                         <div class="row">
                             <div class="col-md-8">
                                 <div class="mb-3">
+                                    <label for="targetPhoneNumber" class="form-label">Target Phone Number (Optional)</label>
+                                    <input type="tel" class="form-control" id="targetPhoneNumber" 
+                                           placeholder="e.g., +12345678901" pattern="\+[0-9]+"
+                                           title="Phone number format: +12345678901">
+                                    <small class="form-text text-muted">If left empty, the system default will be used.</small>
+                                </div>
+                                <div class="mb-3">
                                     <label for="specialInstructions" class="form-label">Special Instructions</label>
                                     <textarea class="form-control" id="specialInstructions" rows="2" 
                                             placeholder="E.g., 'Test language switching' or 'Test urgent line transfer'"></textarea>

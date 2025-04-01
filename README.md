@@ -186,7 +186,7 @@ The system:
 | AWS_SECRET_ACCESS_KEY | AWS secret key | .env file | AWS Parameter Store |
 | PORT | Application port | .env file | AWS Parameter Store |
 | CLIENT_ID | Client identifier | .env file | Environment variable |
-| ENV_TIER | Environment tier (dev/prod) | .env file | Environment variable |
+| ENV_TIER | Environment tier (local/dev/prod) | .env file | Environment variable |
 | AWS_DEFAULT_REGION | AWS region | .env file | Environment variable |
 | LOCAL_MODE | Whether to use local storage | .env file | Environment variable |
 | LOCAL_STORAGE_PATH | Path for local storage | .env file | Environment variable |
@@ -209,6 +209,15 @@ The system uses two JSON files for configuration:
 5. View the test results in the dashboard
 6. Detailed reports are available by clicking on the report ID
 
+### Creating Tests
+
+When creating a new test, you can specify:
+- Persona and behavior profiles
+- Test question
+- Special instructions
+- Maximum conversation turns
+- Target phone number (optional - will use system default if not specified)
+  
 ## Debugging
 
 For local development, use VSCode's debugging capabilities:

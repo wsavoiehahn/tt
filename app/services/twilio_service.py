@@ -49,6 +49,13 @@ class TwilioService:
             from ..services.evaluator import evaluator_service
             from ..services.dynamodb_service import dynamodb_service
 
+            test_data = evaluator_service.active_tests.get(test_id, {})
+            test_case = test_data.get("test_case", {})
+            config = test_case.get("config", {})
+            target_phone_number = (
+                config.get("target_phone_number") or self.ai_service_number
+            )
+
             # Create a simple TwiML for call initiation
             response = VoiceResponse()
             response.say("Speak Now.")
@@ -76,7 +83,7 @@ class TwilioService:
 
             # Create the call with all parameters
             call = self.client.calls.create(
-                to=self.ai_service_number,
+                to=target_phone_number,
                 from_=from_number,
                 twiml=str(response),
                 status_callback=status_callback_url,
