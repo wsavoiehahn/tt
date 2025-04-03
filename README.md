@@ -4,7 +4,7 @@ A system for evaluating AI call center agent performance across various personas
 
 ## Overview
 
-The AI Call Center Evaluator simulates customer calls to test and evaluate the performance of AI call center agents. It can be configured to use different customer personas (Tech-Savvy, Elderly, Non-Native Speaker, etc.) and behaviors (Frustrated, Confused, Urgent, etc.) to create realistic testing scenarios.
+The AI Call Center Evaluator simulates customer calls to test and evaluate the performance of AI call center agents. It can be configured to use different customer personas (Tech-Savvy, Elderly, Non-Native Speaker, etc.) and behaviors (Frustrated, Confused, Urgent, etc.) to create realistic testing scenarios. This code base was started from and based heavily on this blog post from Twilio. https://www.twilio.com/en-us/blog/voice-ai-assistant-openai-realtime-api-node
 
 The system:
 - Initiates outbound calls using Twilio
@@ -46,7 +46,7 @@ The system:
 1. **Clone the repository:**
 
 2. **Create a .env file:**
-   Inside the root directory of the project folder copy the template below and fill in the required values:
+   Inside the root directory of the project folder copy the template below and fill in the required values (note some values will become clear later in the instructions):
    ```
    # OpenAI API credentials
    OPENAI_API_KEY=your_openai_api_key
@@ -74,9 +74,9 @@ The system:
    
    # Application settings
    PORT=4040
-   CLIENT_ID=sendero
-   ENV_TIER=dev
-   LOCAL_MODE=true
+   CLIENT_ID= (client's name use lowercase)
+   ENV_TIER=(local/dev/prod for local it is best to use local) 
+   LOCAL_MODE=(true/false, for local use true)
    LOCAL_STORAGE_PATH=.
    ```
 
@@ -136,7 +136,7 @@ The system:
    **Option A: Using a .env file (recommended)**
    Create a .env file in the project directory:
    ```
-   CLIENT_ID=your_client_id
+   CLIENT_ID=your_client_id (e.g. client name)
    ENV_TIER=prod
    AWS_DEFAULT_REGION=us-east-2
    LOCAL_MODE=false
@@ -200,6 +200,9 @@ The system uses two JSON files for configuration:
 - **kb.json** - Contains the knowledge base with FAQs and IVR scripts
 - **behaviorPersona.json** - Contains persona and behavior definitions
 
+when saved in an s3 bucket they should be saved in the following location
+config/behaviorPersona.json
+config/kb.json
 ## Usage
 
 1. Access the dashboard at `http://localhost/dashboard`
