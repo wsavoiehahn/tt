@@ -1,0 +1,19 @@
+{
+    "faqs": [
+      {
+        "How do I access my account information?": "You can access your account information by logging into our secure member portal. Visit the login page, enter your username and password, and you'll find details about your account, including recent activities and billing information.",
+        "What should I do if I forgot my password?": "If you've forgotten your password, please use the 'Forgot Password' link on our login page. You will receive an email with instructions on how to reset your password securely.",
+        "How can I make a payment or check my billing status?": "Payments can be made securely through our online portal or by calling our automated phone system. Please allow up to two business days for payments to reflect in your account.",
+        "How do I update my personal details?": "To update your personal information, log into the online member portal, navigate to the account settings section, and follow the provided prompts. Changes typically appear within one business day.",
+        "Who should I contact for urgent service issues?": "For immediate assistance related to urgent matters such as service disruptions or critical account access issues, please contact our support line directly and clearly mention that the matter is urgent.",
+        "How can I contact customer support for general questions?": "For general questions, please visit our Frequently Asked Questions (FAQ) page or contact our customer support via email or phone. Our representatives strive to respond promptly.",
+        "What are your customer support hours?": "Our support services are available 24/7 for critical issues. Standard customer service hours for non-urgent inquiries are Monday to Friday, 9 am to 5 pm.",
+        "Can you explain how the system works for someone new to this type of service?": "Of course! Think of our member portal as your personal dashboard where you can view your information, make updates, and get help",
+        "Why is the system so complicated to use?": "We understand it might feel that way. Some steps are in place for your privacy and security.",
+      }
+    ],
+    "ivr_script": {
+      "welcome_message": "Thank you for calling our customer support center. Due to high call volume, wait times may be longer than usual. For account access, billing inquiries, or updating your personal details, please use our secure online member portal available on our website. If your issue is urgent, such as service disruptions or critical account problems, please clearly state this when connected. For general inquiries, consider visiting our FAQ page. We appreciate your patience and understanding."
+    }
+  }
+  
