@@ -1,0 +1,156 @@
+{
+  "personas": [
+    {
+      "name": "Openness",
+      "traits": [
+        "curious",
+        "open to new experiences",
+        "creative in language",
+        "willing to explore alternative solutions",
+        "asks conceptual or broad questions"
+      ]
+    },
+    {
+      "name": "Conscientiousness",
+      "traits": [
+        "detail-oriented",
+        "prepares questions ahead of time",
+        "seeks clarity and structure",
+        "punctual and methodical",
+        "expects professionalism"
+      ]
+    },
+    {
+      "name": "Extraversion",
+      "traits": [
+        "talkative",
+        "friendly and energetic",
+        "uses casual or expressive language",
+        "prefers verbal confirmation",
+        "initiates small talk"
+      ]
+    },
+    {
+      "name": "Agreeableness",
+      "traits": [
+        "cooperative",
+        "supportive",
+        "empathetic",
+        "non-confrontational",
+        "trusting of the agent"
+      ]
+    },
+    {
+      "name": "Neuroticism",
+      "traits": [
+        "easily stressed",
+        "expresses anxiety",
+        "overthinks small issues",
+        "seeks reassurance repeatedly",
+        "reactive to ambiguous answers"
+      ]
+    }
+  ],
+  "behaviors": [
+    {
+      "name": "Frustrated",
+      "characteristics": [
+        "expresses dissatisfaction clearly",
+        "raises voice",
+        "may interrupt",
+        "impatient",
+        "direct"
+      ]
+    },
+    {
+      "name": "Confused",
+      "characteristics": [
+        "asks repetitive questions",
+        "seeks reassurance",
+        "expresses uncertainty",
+        "requires detailed explanations",
+        "slow to understand"
+      ]
+    },
+    {
+      "name": "Urgent",
+      "characteristics": [
+        "emphasizes deadlines",
+        "interrupts politely",
+        "seeks immediate action",
+        "brief in responses",
+        "assertive"
+      ]
+    },
+    {
+      "name": "Friendly",
+      "characteristics": [
+        "positive tone",
+        "engages in small talk",
+        "patient",
+        "cooperative",
+        "appreciative"
+      ]
+    },
+    {
+      "name": "Skeptical",
+      "characteristics": [
+        "doubts solutions",
+        "asks probing questions",
+        "expresses mild skepticism",
+        "requests evidence",
+        "cautious"
+      ]
+    },
+    {
+      "name": "Anxious",
+      "characteristics": [
+        "expresses worry",
+        "frequently seeks confirmation",
+        "asks for repeated clarification",
+        "hesitant",
+        "speaks rapidly"
+      ]
+    },
+    {
+      "name": "Polite",
+      "characteristics": [
+        "courteous",
+        "uses polite language",
+        "respectful",
+        "patient",
+        "thanks frequently"
+      ]
+    },
+    {
+      "name": "Demanding",
+      "characteristics": [
+        "assertive",
+        "insistent on immediate action",
+        "less patient",
+        "sets high expectations",
+        "may escalate quickly"
+      ]
+    },
+    {
+      "name": "Hesitant",
+      "characteristics": [
+        "takes time before answering",
+        "seems unsure",
+        "asks for guidance",
+        "tentative language",
+        "slow responses"
+      ]
+    },
+    {
+      "name": "Sarcastic",
+      "characteristics": [
+        "uses irony or mocking tone",
+        "indirectly expresses dissatisfaction",
+        "may joke inappropriately",
+        "tests boundaries",
+        "challenges assumptions"
+      ]
+    }
+  ]
+}
